@@ -22,26 +22,23 @@ type TestHelper struct {
 }
 
 func setupTestHelper(enterprise bool) *TestHelper {
+	utils.TranslationsPreInit()
+	utils.LoadConfig("config.json")
+	utils.InitTranslations(utils.Cfg.LocalizationSettings)
+
 	th := &TestHelper{
-		App: Global(),
+		App: New(),
 	}
 
-	if th.App.Srv == nil {
-		utils.TranslationsPreInit()
-		utils.LoadConfig("config.json")
-		utils.InitTranslations(utils.Cfg.LocalizationSettings)
-		*utils.Cfg.TeamSettings.MaxUsersPerTeam = 50
-		*utils.Cfg.RateLimitSettings.Enable = false
-		utils.DisableDebugLogForTest()
-		th.App.NewServer()
-		th.App.InitStores()
-		th.App.StartServer()
-		utils.InitHTML()
-		utils.EnableDebugLogForTest()
-		th.App.Srv.Store.MarkSystemRanUnitTests()
+	*utils.Cfg.TeamSettings.MaxUsersPerTeam = 50
+	*utils.Cfg.RateLimitSettings.Enable = false
+	utils.DisableDebugLogForTest()
+	th.App.StartServer()
+	utils.InitHTML()
+	utils.EnableDebugLogForTest()
+	th.App.Srv.Store.MarkSystemRanUnitTests()
 
-		*utils.Cfg.TeamSettings.EnableOpenServer = true
-	}
+	*utils.Cfg.TeamSettings.EnableOpenServer = true
 
 	utils.SetIsLicensed(enterprise)
 	if enterprise {
@@ -62,9 +59,9 @@ func Setup() *TestHelper {
 func (me *TestHelper) InitBasic() *TestHelper {
 	me.BasicTeam = me.CreateTeam()
 	me.BasicUser = me.CreateUser()
-	me.App.LinkUserToTeam(me.BasicUser, me.BasicTeam)
+	me.LinkUserToTeam(me.BasicUser, me.BasicTeam)
 	me.BasicUser2 = me.CreateUser()
-	me.App.LinkUserToTeam(me.BasicUser2, me.BasicTeam)
+	me.LinkUserToTeam(me.BasicUser2, me.BasicTeam)
 	me.BasicChannel = me.CreateChannel(me.BasicTeam)
 	me.BasicPost = me.CreatePost(me.BasicChannel)
 
@@ -175,10 +172,10 @@ func (me *TestHelper) CreatePost(channel *model.Channel) *model.Post {
 	return post
 }
 
-func (a *App) LinkUserToTeam(user *model.User, team *model.Team) {
+func (me *TestHelper) LinkUserToTeam(user *model.User, team *model.Team) {
 	utils.DisableDebugLogForTest()
 
-	err := a.JoinUserToTeam(team, user, "")
+	err := me.App.JoinUserToTeam(team, user, "")
 	if err != nil {
 		l4g.Error(err.Error())
 		l4g.Close()
@@ -189,8 +186,6 @@ func (a *App) LinkUserToTeam(user *model.User, team *model.Team) {
 	utils.EnableDebugLogForTest()
 }
 
-func (a *App) TearDown() {
-	if a.Srv != nil {
-		a.StopServer()
-	}
+func (me *TestHelper) TearDown() {
+	me.App.Shutdown()
 }

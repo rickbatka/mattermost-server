@@ -1,5 +1,7 @@
 .PHONY: build package run stop run-client run-server stop-client stop-server restart restart-server restart-client start-docker clean-dist clean nuke check-style check-client-style check-server-style check-unit-tests test dist setup-mac prepare-enteprise run-client-tests setup-run-client-tests cleanup-run-client-tests test-client build-linux build-osx build-windows internal-test-web-client vet run-server-for-web-client-tests
 
+ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+
 # Build Flags
 BUILD_NUMBER ?= $(BUILD_NUMBER:)
 BUILD_DATE = $(shell date -u)
@@ -54,6 +56,8 @@ GO_LINKER_FLAGS ?= -ldflags \
 # GOOS/GOARCH of the build host, used to determine whether we're cross-compiling or not
 BUILDER_GOOS_GOARCH="$(shell $(GO) env GOOS)_$(shell $(GO) env GOARCH)"
 
+PLATFORM_FILES=$(shell ls -1 ./cmd/platform/*.go | grep -v _test.go)
+
 # Output paths
 DIST_ROOT=dist
 DIST_PATH=$(DIST_ROOT)/mattermost
@@ -62,7 +66,7 @@ DIST_PATH=$(DIST_ROOT)/mattermost
 TESTS=.
 
 TESTFLAGS ?= -short
-TESTFLAGSEE ?= -test.short
+TESTFLAGSEE ?= -short
 
 # Packages lists
 TE_PACKAGES=$(shell go list ./... | grep -v vendor)
@@ -80,7 +84,7 @@ endif
 # Prepares the enterprise build if exists. The IGNORE stuff is a hack to get the Makefile to execute the commands outside a target
 ifeq ($(BUILD_ENTERPRISE_READY),true)
 	IGNORE:=$(shell echo Enterprise build selected, preparing)
-	IGNORE:=$(shell mkdir -p imports/)
+	IGNORE:=$(shell rm -f imports/imports.go)
 	IGNORE:=$(shell cp $(BUILD_ENTERPRISE_DIR)/imports/imports.go imports/)
 	IGNORE:=$(shell rm -f enterprise)
 	IGNORE:=$(shell ln -s $(BUILD_ENTERPRISE_DIR) enterprise)
@@ -124,7 +128,7 @@ start-docker:
 		echo starting mattermost-minio; \
 		docker run --name mattermost-minio -p 9001:9000 -e "MINIO_ACCESS_KEY=minioaccesskey" \
 		-e "MINIO_SECRET_KEY=miniosecretkey" -d minio/minio:latest server /data > /dev/null; \
-		docker exec -it mattermost-minio /bin/sh -c "mkdir /data/mattermost-test" > /dev/null; \
+		docker exec -it mattermost-minio /bin/sh -c "mkdir -p /data/mattermost-test" > /dev/null; \
 	elif [ $(shell docker ps | grep -ci mattermost-minio) -eq 0 ]; then \
 		echo restarting mattermost-minio; \
 		docker start mattermost-minio > /dev/null; \
@@ -306,66 +310,30 @@ do-cover-file:
 
 test-te: do-cover-file
 	@echo Testing TE
-
-
 	@echo "Packages to test: "$(TE_PACKAGES)
-
-	@for package in $(TE_PACKAGES); do \
-		echo "Testing "$$package; \
-		$(GO) test $(GOFLAGS) -run=$(TESTS) $(TESTFLAGS) -test.v -test.timeout=2000s -covermode=count -coverprofile=cprofile.out -coverpkg=$(ALL_PACKAGES_COMMA) $$package || exit 1; \
-		if [ -f cprofile.out ]; then \
-			tail -n +2 cprofile.out >> cover.out; \
-			rm cprofile.out; \
-		fi; \
-	done
+	find . -name 'cprofile.out' -exec sh -c 'rm "{}"' \;
+	$(GO) test $(GOFLAGS) -run=$(TESTS) $(TESTFLAGS) -p 1 -v -timeout=2000s -covermode=count -coverpkg=$(ALL_PACKAGES_COMMA) -exec $(ROOT)/scripts/test-xprog.sh $(TE_PACKAGES)
+	find . -name 'cprofile.out' -exec sh -c 'tail -n +2 {} >> cover.out ; rm "{}"' \;
 
 test-ee: do-cover-file
 	@echo Testing EE
 
 ifeq ($(BUILD_ENTERPRISE_READY),true)
 	@echo "Packages to test: "$(EE_PACKAGES)
-
-	for package in $(EE_PACKAGES); do \
-		echo "Testing "$$package; \
-		$(GO) test $(GOFLAGS) -run=$(TESTS) -covermode=count -coverpkg=$(ALL_PACKAGES_COMMA) -c $$package || exit 1; \
-		if [ -f $$(basename $$package).test ]; then \
-			echo "Testing "$$package; \
-			./$$(basename $$package).test -test.v $(TESTFLAGSEE) -test.timeout=2000s -test.coverprofile=cprofile.out || exit 1; \
-			if [ -f cprofile.out ]; then \
-				tail -n +2 cprofile.out >> cover.out; \
-				rm cprofile.out; \
-			fi; \
-			rm -r $$(basename $$package).test; \
-		fi; \
-	done
-
+	find . -name 'cprofile.out' -exec sh -c 'rm "{}"' \;
+	$(GO) test $(GOFLAGS) -run=$(TESTS) $(TESTFLAGSEE) -p 1 -v -timeout=2000s -covermode=count -coverpkg=$(ALL_PACKAGES_COMMA) -exec $(ROOT)/scripts/test-xprog.sh $(EE_PACKAGES)
+	find . -name 'cprofile.out' -exec sh -c 'tail -n +2 {} >> cover.out ; rm "{}"' \;
 	rm -f config/*.crt
 	rm -f config/*.key
 endif
 
-test-postgres:
-	@echo Testing Postgres
-
-	@sed -i'' -e 's|"DriverName": "mysql"|"DriverName": "postgres"|g' config/config.json
-	@sed -i'' -e 's|"DataSource": "mmuser:mostest@tcp(dockerhost:3306)/mattermost_test?charset=utf8mb4,utf8"|"DataSource": "postgres://mmuser:mostest@dockerhost:5432?sslmode=disable"|g' config/config.json
-
-	$(GO) test $(GOFLAGS) -run=$(TESTS) -test.v -test.timeout=2000s -covermode=count -coverprofile=cprofile.out -coverpkg=$(ALL_PACKAGES_COMMA) github.com/mattermost/mattermost-server/store || exit 1; \
-	if [ -f cprofile.out ]; then \
-		tail -n +2 cprofile.out >> cover.out; \
-		rm cprofile.out; \
-	fi; \
-
-	@sed -i'' -e 's|"DataSource": "postgres://mmuser:mostest@dockerhost:5432?sslmode=disable"|"DataSource": "mmuser:mostest@tcp(dockerhost:3306)/mattermost_test?charset=utf8mb4,utf8"|g' config/config.json
-	@sed -i'' -e 's|"DriverName": "postgres"|"DriverName": "mysql"|g' config/config.json
-	@rm config/config.json-e
-
 test-server: test-te test-ee
 
 internal-test-web-client:
-	$(GO) run $(GOFLAGS) ./cmd/platform/*go test web_client_tests
+	$(GO) run $(GOFLAGS) $(PLATFORM_FILES) test web_client_tests
 
 run-server-for-web-client-tests:
-	$(GO) run $(GOFLAGS) ./cmd/platform/*go test web_client_tests_server
+	$(GO) run $(GOFLAGS) $(PLATFORM_FILES) test web_client_tests_server
 
 test-client:
 	@echo Running client tests
@@ -384,13 +352,13 @@ run-server: start-docker
 	@echo Running mattermost for development
 
 	mkdir -p $(BUILD_WEBAPP_DIR)/dist/files
-	$(GO) run $(GOFLAGS) $(GO_LINKER_FLAGS) ./cmd/platform/*.go --disableconfigwatch &
+	$(GO) run $(GOFLAGS) $(GO_LINKER_FLAGS) $(PLATFORM_FILES) --disableconfigwatch &
 
 run-cli: start-docker
 	@echo Running mattermost for development
 	@echo Example should be like 'make ARGS="-version" run-cli'
 
-	$(GO) run $(GOFLAGS) $(GO_LINKER_FLAGS) ./cmd/platform/*.go ${ARGS}
+	$(GO) run $(GOFLAGS) $(GO_LINKER_FLAGS) $(PLATFORM_FILES) ${ARGS}
 
 run-client:
 	@echo Running mattermost client for development
@@ -441,7 +409,7 @@ restart-client: | stop-client run-client
 
 run-job-server:
 	@echo Running job server for development
-	$(GO) run $(GOFLAGS) $(GO_LINKER_FLAGS) ./cmd/platform/*.go jobserver --disableconfigwatch &
+	$(GO) run $(GOFLAGS) $(GO_LINKER_FLAGS) $(PLATFORM_FILES) jobserver --disableconfigwatch &
 
 clean: stop-docker
 	@echo Cleaning
@@ -455,15 +423,17 @@ clean: stop-docker
 	rm -rf logs
 
 	rm -f mattermost.log
+	rm -f mattermost.log.jsonl
 	rm -f npm-debug.log
 	rm -f api/mattermost.log
+	rm -f api/mattermost.log.jsonl
 	rm -f .prepare-go
 	rm -f enterprise
 	rm -f cover.out
 	rm -f ecover.out
 	rm -f *.out
 	rm -f *.test
-	rm -f imports.go
+	rm -f imports/imports.go
 
 nuke: clean clean-docker
 	@echo BOOM

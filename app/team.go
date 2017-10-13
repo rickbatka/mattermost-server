@@ -106,7 +106,7 @@ func (a *App) UpdateTeam(team *model.Team) (*model.Team, *model.AppError) {
 
 	oldTeam.Sanitize()
 
-	sendUpdatedTeamEvent(oldTeam)
+	a.sendUpdatedTeamEvent(oldTeam)
 
 	return oldTeam, nil
 }
@@ -126,15 +126,17 @@ func (a *App) PatchTeam(teamId string, patch *model.TeamPatch) (*model.Team, *mo
 
 	updatedTeam.Sanitize()
 
-	sendUpdatedTeamEvent(updatedTeam)
+	a.sendUpdatedTeamEvent(updatedTeam)
 
 	return updatedTeam, nil
 }
 
-func sendUpdatedTeamEvent(team *model.Team) {
+func (a *App) sendUpdatedTeamEvent(team *model.Team) {
 	message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_UPDATE_TEAM, "", "", "", nil)
 	message.Add("team", team.ToJson())
-	go Publish(message)
+	a.Go(func() {
+		a.Publish(message)
+	})
 }
 
 func (a *App) UpdateTeamMemberRoles(teamId string, userId string, newRoles string) (*model.TeamMember, *model.AppError) {
@@ -163,16 +165,18 @@ func (a *App) UpdateTeamMemberRoles(teamId string, userId string, newRoles strin
 
 	a.ClearSessionCacheForUser(userId)
 
-	sendUpdatedMemberRoleEvent(userId, member)
+	a.sendUpdatedMemberRoleEvent(userId, member)
 
 	return member, nil
 }
 
-func sendUpdatedMemberRoleEvent(userId string, member *model.TeamMember) {
+func (a *App) sendUpdatedMemberRoleEvent(userId string, member *model.TeamMember) {
 	message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_MEMBERROLE_UPDATED, "", "", userId, nil)
 	message.Add("member", member.ToJson())
 
-	go Publish(message)
+	a.Go(func() {
+		a.Publish(message)
+	})
 }
 
 func (a *App) AddUserToTeam(teamId string, userId string, userRequestorId string) (*model.Team, *model.AppError) {
@@ -269,7 +273,11 @@ func (a *App) AddUserToTeamByInviteId(inviteId string, userId string) (*model.Te
 	return team, nil
 }
 
-func (a *App) joinUserToTeam(team *model.Team, user *model.User) (bool, *model.AppError) {
+// Returns three values:
+// 1. a pointer to the team member, if successful
+// 2. a boolean: true if the user has a non-deleted team member for that team already, otherwise false.
+// 3. a pointer to an AppError if something went wrong.
+func (a *App) joinUserToTeam(team *model.Team, user *model.User) (*model.TeamMember, bool, *model.AppError) {
 	tm := &model.TeamMember{
 		TeamId: team.Id,
 		UserId: user.Id,
@@ -281,29 +289,31 @@ func (a *App) joinUserToTeam(team *model.Team, user *model.User) (bool, *model.A
 	}
 
 	if etmr := <-a.Srv.Store.Team().GetMember(team.Id, user.Id); etmr.Err == nil {
-		// Membership alredy exists.  Check if deleted and and update, otherwise do nothing
+		// Membership already exists.  Check if deleted and and update, otherwise do nothing
 		rtm := etmr.Data.(*model.TeamMember)
 
 		// Do nothing if already added
 		if rtm.DeleteAt == 0 {
-			return true, nil
+			return rtm, true, nil
 		}
 
 		if tmr := <-a.Srv.Store.Team().UpdateMember(tm); tmr.Err != nil {
-			return false, tmr.Err
+			return nil, false, tmr.Err
+		} else {
+			return tmr.Data.(*model.TeamMember), false, nil
 		}
 	} else {
 		// Membership appears to be missing.  Lets try to add.
 		if tmr := <-a.Srv.Store.Team().SaveMember(tm); tmr.Err != nil {
-			return false, tmr.Err
+			return nil, false, tmr.Err
+		} else {
+			return tmr.Data.(*model.TeamMember), false, nil
 		}
 	}
-
-	return false, nil
 }
 
 func (a *App) JoinUserToTeam(team *model.Team, user *model.User, userRequestorId string) *model.AppError {
-	if alreadyAdded, err := a.joinUserToTeam(team, user); err != nil {
+	if _, alreadyAdded, err := a.joinUserToTeam(team, user); err != nil {
 		return err
 	} else if alreadyAdded {
 		return nil
@@ -330,7 +340,7 @@ func (a *App) JoinUserToTeam(team *model.Team, user *model.User, userRequestorId
 	message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_ADDED_TO_TEAM, "", "", user.Id, nil)
 	message.Add("team_id", team.Id)
 	message.Add("user_id", user.Id)
-	Publish(message)
+	a.Publish(message)
 
 	return nil
 }
@@ -462,7 +472,7 @@ func (a *App) AddTeamMember(teamId, userId string) (*model.TeamMember, *model.Ap
 	message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_ADDED_TO_TEAM, "", "", userId, nil)
 	message.Add("team_id", teamId)
 	message.Add("user_id", userId)
-	Publish(message)
+	a.Publish(message)
 
 	return teamMember, nil
 }
@@ -484,7 +494,7 @@ func (a *App) AddTeamMembers(teamId string, userIds []string, userRequestorId st
 		message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_ADDED_TO_TEAM, "", "", userId, nil)
 		message.Add("team_id", teamId)
 		message.Add("user_id", userId)
-		Publish(message)
+		a.Publish(message)
 	}
 
 	return members, nil
@@ -603,7 +613,7 @@ func (a *App) LeaveTeam(team *model.Team, user *model.User) *model.AppError {
 	message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_LEAVE_TEAM, team.Id, "", "", nil)
 	message.Add("user_id", user.Id)
 	message.Add("team_id", team.Id)
-	Publish(message)
+	a.Publish(message)
 
 	teamMember.Roles = ""
 	teamMember.DeleteAt = model.GetMillis()

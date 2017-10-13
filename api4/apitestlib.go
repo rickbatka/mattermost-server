@@ -5,7 +5,9 @@ package api4
 
 import (
 	"bytes"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"reflect"
@@ -20,10 +22,11 @@ import (
 	"github.com/mattermost/mattermost-server/app"
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/store"
+	"github.com/mattermost/mattermost-server/store/sqlstore"
+	"github.com/mattermost/mattermost-server/store/storetest"
 	"github.com/mattermost/mattermost-server/utils"
 	"github.com/mattermost/mattermost-server/wsapi"
 
-	"github.com/mattermost/mattermost-server/jobs"
 	s3 "github.com/minio/minio-go"
 	"github.com/minio/minio-go/pkg/credentials"
 )
@@ -45,39 +48,60 @@ type TestHelper struct {
 	SystemAdminUser   *model.User
 }
 
+type persistentTestStore struct {
+	store.Store
+}
+
+func (*persistentTestStore) Close() {}
+
+var testStoreContainer *storetest.RunningContainer
+var testStore *persistentTestStore
+
+// UseTestStore sets the container and corresponding settings to use for tests. Once the tests are
+// complete (e.g. at the end of your TestMain implementation), you should call StopTestStore.
+func UseTestStore(container *storetest.RunningContainer, settings *model.SqlSettings) {
+	testStoreContainer = container
+	testStore = &persistentTestStore{store.NewLayeredStore(sqlstore.NewSqlSupplier(*settings, nil), nil, nil)}
+}
+
+func StopTestStore() {
+	if testStoreContainer != nil {
+		testStoreContainer.Stop()
+		testStoreContainer = nil
+	}
+}
+
 func setupTestHelper(enterprise bool) *TestHelper {
-	th := &TestHelper{
-		App: app.Global(),
-	}
-
-	if th.App.Srv == nil {
+	if utils.T == nil {
 		utils.TranslationsPreInit()
-		utils.LoadConfig("config.json")
-		utils.InitTranslations(utils.Cfg.LocalizationSettings)
-		*utils.Cfg.TeamSettings.MaxUsersPerTeam = 50
-		*utils.Cfg.RateLimitSettings.Enable = false
-		utils.Cfg.EmailSettings.SendEmailNotifications = true
-		utils.DisableDebugLogForTest()
-		th.App.NewServer()
-		th.App.InitStores()
-		th.App.Srv.Router = NewRouter()
-		wsapi.InitRouter()
-		th.App.StartServer()
-		Init(th.App, th.App.Srv.Router, true)
-		wsapi.InitApi()
-		utils.EnableDebugLogForTest()
-		th.App.Srv.Store.MarkSystemRanUnitTests()
-
-		*utils.Cfg.TeamSettings.EnableOpenServer = true
 	}
+	utils.LoadConfig("config.json")
+	utils.InitTranslations(utils.Cfg.LocalizationSettings)
+
+	var options []app.Option
+	if testStore != nil {
+		options = append(options, app.StoreOverride(testStore))
+	}
+
+	th := &TestHelper{
+		App: app.New(options...),
+	}
+
+	*utils.Cfg.TeamSettings.MaxUsersPerTeam = 50
+	*utils.Cfg.RateLimitSettings.Enable = false
+	utils.Cfg.EmailSettings.SendEmailNotifications = true
+	utils.DisableDebugLogForTest()
+	th.App.StartServer()
+	Init(th.App, th.App.Srv.Router, true)
+	wsapi.Init(th.App, th.App.Srv.WebSocketRouter)
+	utils.EnableDebugLogForTest()
+	th.App.Srv.Store.MarkSystemRanUnitTests()
+
+	*utils.Cfg.TeamSettings.EnableOpenServer = true
 
 	utils.SetIsLicensed(enterprise)
 	if enterprise {
 		utils.License().Features.SetDefaults()
-	}
-
-	if jobs.Srv.Store == nil {
-		jobs.Srv.Store = th.App.Srv.Store
 	}
 
 	th.Client = th.CreateClient()
@@ -93,13 +117,7 @@ func Setup() *TestHelper {
 	return setupTestHelper(false)
 }
 
-func StopServer() {
-	if app.Global().Srv != nil {
-		app.Global().StopServer()
-	}
-}
-
-func TearDown() {
+func (me *TestHelper) TearDown() {
 	utils.DisableDebugLogForTest()
 
 	var wg sync.WaitGroup
@@ -109,13 +127,13 @@ func TearDown() {
 		defer wg.Done()
 		options := map[string]bool{}
 		options[store.USER_SEARCH_OPTION_NAMES_ONLY_NO_FULL_NAME] = true
-		if result := <-app.Global().Srv.Store.User().Search("", "fakeuser", options); result.Err != nil {
+		if result := <-me.App.Srv.Store.User().Search("", "fakeuser", options); result.Err != nil {
 			l4g.Error("Error tearing down test users")
 		} else {
 			users := result.Data.([]*model.User)
 
 			for _, u := range users {
-				if err := app.Global().PermanentDeleteUser(u); err != nil {
+				if err := me.App.PermanentDeleteUser(u); err != nil {
 					l4g.Error(err.Error())
 				}
 			}
@@ -124,13 +142,13 @@ func TearDown() {
 
 	go func() {
 		defer wg.Done()
-		if result := <-app.Global().Srv.Store.Team().SearchByName("faketeam"); result.Err != nil {
+		if result := <-me.App.Srv.Store.Team().SearchByName("faketeam"); result.Err != nil {
 			l4g.Error("Error tearing down test teams")
 		} else {
 			teams := result.Data.([]*model.Team)
 
 			for _, t := range teams {
-				if err := app.Global().PermanentDeleteTeam(t); err != nil {
+				if err := me.App.PermanentDeleteTeam(t); err != nil {
 					l4g.Error(err.Error())
 				}
 			}
@@ -139,14 +157,14 @@ func TearDown() {
 
 	go func() {
 		defer wg.Done()
-		if result := <-app.Global().Srv.Store.OAuth().GetApps(0, 1000); result.Err != nil {
+		if result := <-me.App.Srv.Store.OAuth().GetApps(0, 1000); result.Err != nil {
 			l4g.Error("Error tearing down test oauth apps")
 		} else {
 			apps := result.Data.([]*model.OAuthApp)
 
 			for _, a := range apps {
 				if strings.HasPrefix(a.Name, "fakeoauthapp") {
-					<-app.Global().Srv.Store.OAuth().DeleteApp(a.Id)
+					<-me.App.Srv.Store.OAuth().DeleteApp(a.Id)
 				}
 			}
 		}
@@ -154,11 +172,21 @@ func TearDown() {
 
 	wg.Wait()
 
+	me.App.Shutdown()
+
 	utils.EnableDebugLogForTest()
+
+	if err := recover(); err != nil {
+		StopTestStore()
+		panic(err)
+	}
 }
 
 func (me *TestHelper) InitBasic() *TestHelper {
+	me.waitForConnectivity()
+
 	me.TeamAdminUser = me.CreateUser()
+	me.App.UpdateUserRoles(me.TeamAdminUser.Id, model.ROLE_SYSTEM_USER.Id)
 	me.LoginTeamAdmin()
 	me.BasicTeam = me.CreateTeam()
 	me.BasicChannel = me.CreatePublicChannel()
@@ -166,9 +194,9 @@ func (me *TestHelper) InitBasic() *TestHelper {
 	me.BasicChannel2 = me.CreatePublicChannel()
 	me.BasicPost = me.CreatePost()
 	me.BasicUser = me.CreateUser()
-	LinkUserToTeam(me.BasicUser, me.BasicTeam)
+	me.LinkUserToTeam(me.BasicUser, me.BasicTeam)
 	me.BasicUser2 = me.CreateUser()
-	LinkUserToTeam(me.BasicUser2, me.BasicTeam)
+	me.LinkUserToTeam(me.BasicUser2, me.BasicTeam)
 	me.App.AddUserToChannel(me.BasicUser, me.BasicChannel)
 	me.App.AddUserToChannel(me.BasicUser2, me.BasicChannel)
 	me.App.AddUserToChannel(me.BasicUser, me.BasicChannel2)
@@ -182,11 +210,24 @@ func (me *TestHelper) InitBasic() *TestHelper {
 }
 
 func (me *TestHelper) InitSystemAdmin() *TestHelper {
+	me.waitForConnectivity()
+
 	me.SystemAdminUser = me.CreateUser()
 	me.App.UpdateUserRoles(me.SystemAdminUser.Id, model.ROLE_SYSTEM_USER.Id+" "+model.ROLE_SYSTEM_ADMIN.Id)
 	me.LoginSystemAdmin()
 
 	return me
+}
+
+func (me *TestHelper) waitForConnectivity() {
+	for i := 0; i < 1000; i++ {
+		_, err := net.Dial("tcp", "localhost"+*utils.Cfg.ServiceSettings.ListenAddress)
+		if err == nil {
+			return
+		}
+		time.Sleep(time.Millisecond * 20)
+	}
+	panic("unable to connect")
 }
 
 func (me *TestHelper) CreateClient() *model.Client4 {
@@ -233,9 +274,10 @@ func (me *TestHelper) CreateUserWithClient(client *model.Client4) *model.User {
 	}
 
 	utils.DisableDebugLogForTest()
-	ruser, _ := client.CreateUser(user)
+	ruser, r := client.CreateUser(user)
+	fmt.Println(r)
 	ruser.Password = "Password1"
-	VerifyUserEmail(ruser.Id)
+	store.Must(me.App.Srv.Store.User().VerifyEmail(ruser.Id))
 	utils.EnableDebugLogForTest()
 	return ruser
 }
@@ -380,10 +422,10 @@ func (me *TestHelper) UpdateActiveUser(user *model.User, active bool) {
 	utils.EnableDebugLogForTest()
 }
 
-func LinkUserToTeam(user *model.User, team *model.Team) {
+func (me *TestHelper) LinkUserToTeam(user *model.User, team *model.Team) {
 	utils.DisableDebugLogForTest()
 
-	err := app.Global().JoinUserToTeam(team, user, "")
+	err := me.App.JoinUserToTeam(team, user, "")
 	if err != nil {
 		l4g.Error(err.Error())
 		l4g.Close()
@@ -416,10 +458,6 @@ func GenerateTestAppName() string {
 
 func GenerateTestId() string {
 	return model.NewId()
-}
-
-func VerifyUserEmail(userId string) {
-	store.Must(app.Global().Srv.Store.User().VerifyEmail(userId))
 }
 
 func CheckUserSanitization(t *testing.T, user *model.User) {
@@ -684,13 +722,13 @@ func cleanupTestFile(info *model.FileInfo) error {
 	return nil
 }
 
-func MakeUserChannelAdmin(user *model.User, channel *model.Channel) {
+func (me *TestHelper) MakeUserChannelAdmin(user *model.User, channel *model.Channel) {
 	utils.DisableDebugLogForTest()
 
-	if cmr := <-app.Global().Srv.Store.Channel().GetMember(channel.Id, user.Id); cmr.Err == nil {
+	if cmr := <-me.App.Srv.Store.Channel().GetMember(channel.Id, user.Id); cmr.Err == nil {
 		cm := cmr.Data.(*model.ChannelMember)
 		cm.Roles = "channel_admin channel_user"
-		if sr := <-app.Global().Srv.Store.Channel().UpdateMember(cm); sr.Err != nil {
+		if sr := <-me.App.Srv.Store.Channel().UpdateMember(cm); sr.Err != nil {
 			utils.EnableDebugLogForTest()
 			panic(sr.Err)
 		}
@@ -702,11 +740,11 @@ func MakeUserChannelAdmin(user *model.User, channel *model.Channel) {
 	utils.EnableDebugLogForTest()
 }
 
-func UpdateUserToTeamAdmin(user *model.User, team *model.Team) {
+func (me *TestHelper) UpdateUserToTeamAdmin(user *model.User, team *model.Team) {
 	utils.DisableDebugLogForTest()
 
 	tm := &model.TeamMember{TeamId: team.Id, UserId: user.Id, Roles: model.ROLE_TEAM_USER.Id + " " + model.ROLE_TEAM_ADMIN.Id}
-	if tmr := <-app.Global().Srv.Store.Team().UpdateMember(tm); tmr.Err != nil {
+	if tmr := <-me.App.Srv.Store.Team().UpdateMember(tm); tmr.Err != nil {
 		utils.EnableDebugLogForTest()
 		l4g.Error(tmr.Err.Error())
 		l4g.Close()
@@ -716,11 +754,11 @@ func UpdateUserToTeamAdmin(user *model.User, team *model.Team) {
 	utils.EnableDebugLogForTest()
 }
 
-func UpdateUserToNonTeamAdmin(user *model.User, team *model.Team) {
+func (me *TestHelper) UpdateUserToNonTeamAdmin(user *model.User, team *model.Team) {
 	utils.DisableDebugLogForTest()
 
 	tm := &model.TeamMember{TeamId: team.Id, UserId: user.Id, Roles: model.ROLE_TEAM_USER.Id}
-	if tmr := <-app.Global().Srv.Store.Team().UpdateMember(tm); tmr.Err != nil {
+	if tmr := <-me.App.Srv.Store.Team().UpdateMember(tm); tmr.Err != nil {
 		utils.EnableDebugLogForTest()
 		l4g.Error(tmr.Err.Error())
 		l4g.Close()

@@ -40,23 +40,27 @@ type WebConn struct {
 	AllChannelMembers         map[string]string
 	LastAllChannelMembersTime int64
 	Sequence                  int64
+	endWritePump              chan struct{}
+	pumpFinished              chan struct{}
 }
 
 func (a *App) NewWebConn(ws *websocket.Conn, session model.Session, t goi18n.TranslateFunc, locale string) *WebConn {
 	if len(session.UserId) > 0 {
-		go func() {
+		a.Go(func() {
 			a.SetStatusOnline(session.UserId, session.Id, false)
 			a.UpdateLastActivityAtIfNeeded(session)
-		}()
+		})
 	}
 
 	wc := &WebConn{
-		App:       a,
-		Send:      make(chan model.WebSocketMessage, SEND_QUEUE_SIZE),
-		WebSocket: ws,
-		UserId:    session.UserId,
-		T:         t,
-		Locale:    locale,
+		App:          a,
+		Send:         make(chan model.WebSocketMessage, SEND_QUEUE_SIZE),
+		WebSocket:    ws,
+		UserId:       session.UserId,
+		T:            t,
+		Locale:       locale,
+		endWritePump: make(chan struct{}, 1),
+		pumpFinished: make(chan struct{}, 1),
 	}
 
 	wc.SetSession(&session)
@@ -64,6 +68,12 @@ func (a *App) NewWebConn(ws *websocket.Conn, session model.Session, t goi18n.Tra
 	wc.SetSessionExpiresAt(session.ExpiresAt)
 
 	return wc
+}
+
+func (wc *WebConn) Close() {
+	wc.WebSocket.Close()
+	wc.endWritePump <- struct{}{}
+	<-wc.pumpFinished
 }
 
 func (c *WebConn) GetSessionExpiresAt() int64 {
@@ -94,9 +104,20 @@ func (c *WebConn) SetSession(v *model.Session) {
 	c.session.Store(v)
 }
 
-func (c *WebConn) ReadPump() {
+func (c *WebConn) Pump() {
+	ch := make(chan struct{}, 1)
+	go func() {
+		c.writePump()
+		ch <- struct{}{}
+	}()
+	c.readPump()
+	<-ch
+	c.pumpFinished <- struct{}{}
+}
+
+func (c *WebConn) readPump() {
 	defer func() {
-		HubUnregister(c)
+		c.App.HubUnregister(c)
 		c.WebSocket.Close()
 	}()
 	c.WebSocket.SetReadLimit(model.SOCKET_MAX_MESSAGE_SIZE_KB)
@@ -104,7 +125,9 @@ func (c *WebConn) ReadPump() {
 	c.WebSocket.SetPongHandler(func(string) error {
 		c.WebSocket.SetReadDeadline(time.Now().Add(PONG_WAIT))
 		if c.IsAuthenticated() {
-			go c.App.SetStatusAwayIfNeeded(c.UserId, false)
+			c.App.Go(func() {
+				c.App.SetStatusAwayIfNeeded(c.UserId, false)
+			})
 		}
 		return nil
 	})
@@ -126,7 +149,7 @@ func (c *WebConn) ReadPump() {
 	}
 }
 
-func (c *WebConn) WritePump() {
+func (c *WebConn) writePump() {
 	ticker := time.NewTicker(PING_PERIOD)
 	authTicker := time.NewTicker(AUTH_TIMEOUT)
 
@@ -191,7 +214,9 @@ func (c *WebConn) WritePump() {
 				}
 
 				if c.App.Metrics != nil {
-					go c.App.Metrics.IncrementWebSocketBroadcast(msg.EventType())
+					c.App.Go(func() {
+						c.App.Metrics.IncrementWebSocketBroadcast(msg.EventType())
+					})
 				}
 
 			}
@@ -207,7 +232,8 @@ func (c *WebConn) WritePump() {
 
 				return
 			}
-
+		case <-c.endWritePump:
+			return
 		case <-authTicker.C:
 			if c.GetSessionToken() == "" {
 				l4g.Debug(fmt.Sprintf("websocket.authTicker: did not authenticate ip=%v", c.WebSocket.RemoteAddr()))

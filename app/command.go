@@ -47,9 +47,9 @@ func (a *App) CreateCommandPost(post *model.Post, teamId string, response *model
 
 	if response.ResponseType == model.COMMAND_RESPONSE_TYPE_IN_CHANNEL {
 		return a.CreatePostMissingChannel(post, true)
-	} else if response.ResponseType == "" || response.ResponseType == model.COMMAND_RESPONSE_TYPE_EPHEMERAL {
+	} else if (response.ResponseType == "" || response.ResponseType == model.COMMAND_RESPONSE_TYPE_EPHEMERAL) && (response.Text != "" || response.Attachments != nil) {
 		post.ParentId = ""
-		SendEphemeralPost(post.UserId, post)
+		a.SendEphemeralPost(post.UserId, post)
 	}
 
 	return post, nil
@@ -239,6 +239,8 @@ func (a *App) HandleCommandResponse(command *model.Command, args *model.CommandA
 	post.RootId = args.RootId
 	post.ParentId = args.ParentId
 	post.UserId = args.UserId
+	post.Type = response.Type
+	post.Props = response.Props
 
 	if !builtIn {
 		post.AddProp("from_webhook", "true")
@@ -332,6 +334,16 @@ func (a *App) UpdateCommand(oldCmd, updatedCmd *model.Command) (*model.Command, 
 	} else {
 		return result.Data.(*model.Command), nil
 	}
+}
+
+func (a *App) MoveCommand(team *model.Team, command *model.Command) *model.AppError {
+	command.TeamId = team.Id
+
+	if result := <-a.Srv.Store.Command().Update(command); result.Err != nil {
+		return result.Err
+	}
+
+	return nil
 }
 
 func (a *App) RegenCommandToken(cmd *model.Command) (*model.Command, *model.AppError) {

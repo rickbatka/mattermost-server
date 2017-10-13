@@ -254,6 +254,10 @@ func (c *Client4) GetBrandRoute() string {
 	return fmt.Sprintf("/brand")
 }
 
+func (c *Client4) GetDataRetentionRoute() string {
+	return fmt.Sprintf("/data_retention")
+}
+
 func (c *Client4) GetElasticsearchRoute() string {
 	return fmt.Sprintf("/elasticsearch")
 }
@@ -1580,13 +1584,13 @@ func (c *Client4) GetChannelMembersForUser(userId, teamId, etag string) (*Channe
 }
 
 // ViewChannel performs a view action for a user. Synonymous with switching channels or marking channels as read by a user.
-func (c *Client4) ViewChannel(userId string, view *ChannelView) (bool, *Response) {
+func (c *Client4) ViewChannel(userId string, view *ChannelView) (*ChannelViewResponse, *Response) {
 	url := fmt.Sprintf(c.GetChannelsRoute()+"/members/%v/view", userId)
 	if r, err := c.DoApiPost(url, view.ToJson()); err != nil {
-		return false, BuildErrorResponse(r, err)
+		return nil, BuildErrorResponse(r, err)
 	} else {
 		defer closeBody(r)
-		return CheckStatusOK(r), BuildResponse(r)
+		return ChannelViewResponseFromJson(r.Body), BuildResponse(r)
 	}
 }
 
@@ -2757,6 +2761,18 @@ func (c *Client4) PurgeElasticsearchIndexes() (bool, *Response) {
 	}
 }
 
+// Data Retention Section
+
+// GetDataRetentionPolicy will get the current server data retention policy details.
+func (c *Client4) GetDataRetentionPolicy() (*DataRetentionPolicy, *Response) {
+	if r, err := c.DoApiGet(c.GetDataRetentionRoute()+"/policy", ""); err != nil {
+		return nil, BuildErrorResponse(r, err)
+	} else {
+		defer closeBody(r)
+		return DataRetentionPolicyFromJson(r.Body), BuildResponse(r)
+	}
+}
+
 // Commands Section
 
 // CreateCommand will create a new command if the user have the right permissions.
@@ -2802,7 +2818,10 @@ func (c *Client4) ListCommands(teamId string, customOnly bool) ([]*Command, *Res
 
 // ExecuteCommand executes a given command.
 func (c *Client4) ExecuteCommand(channelId, command string) (*CommandResponse, *Response) {
-	commandArgs := &CommandArgs{ChannelId: channelId, Command: command}
+	commandArgs := &CommandArgs{
+		ChannelId: channelId,
+		Command:   command,
+	}
 	if r, err := c.DoApiPost(c.GetCommandsRoute()+"/execute", commandArgs.ToJson()); err != nil {
 		return nil, BuildErrorResponse(r, err)
 	} else {

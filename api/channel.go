@@ -649,7 +649,9 @@ func addMember(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go c.App.PostAddToChannelMessage(oUser, nUser, channel)
+	c.App.Go(func() {
+		c.App.PostAddToChannelMessage(oUser, nUser, channel)
+	})
 
 	c.App.UpdateChannelLastViewedAt([]string{id}, oUser.Id)
 	w.Write([]byte(cm.ToJson()))
@@ -779,7 +781,7 @@ func viewChannel(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := c.App.ViewChannel(view, c.Session.UserId, !c.Session.IsMobileApp()); err != nil {
+	if _, err := c.App.ViewChannel(view, c.Session.UserId, !c.Session.IsMobileApp()); err != nil {
 		c.Err = err
 		return
 	}

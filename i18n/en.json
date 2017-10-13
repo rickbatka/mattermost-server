@@ -3597,7 +3597,7 @@
   },
   {
     "id": "cli.license.critical",
-    "translation": "Feature requires an enterprise license. Please contact your system administrator about upgrading your enterprise license."
+    "translation": "Feature requires an upgrade to Enterprise Edition and the inclusion of a license key. Please contact your System Administrator."
   },
   {
     "id": "ent.brand.save_brand_image.decode.app_error",
@@ -3688,6 +3688,10 @@
     "translation": "Compliance export started for job '{{.JobName}}' at '{{.FilePath}}'"
   },
   {
+    "id": "ent.data_retention.generic.license.error",
+    "translation": "License does not support Data Retention."
+  },
+  {
     "id": "ent.elasticsearch.aggregator_worker.create_index_job.error",
     "translation": "Elasticsearch aggregator worker failed to create the indexing job"
   },
@@ -3720,12 +3724,12 @@
     "translation": "Failed to setup Elasticsearch index mapping"
   },
   {
-    "id": "ent.elasticsearch.data_retention_delete_indexes.get_indexes.error",
-    "translation": "Failed to get Elasticsearch indexes"
-  },
-  {
     "id": "ent.elasticsearch.data_retention_delete_indexes.delete_index.error",
     "translation": "Failed to delete Elasticsearch index"
+  },
+  {
+    "id": "ent.elasticsearch.data_retention_delete_indexes.get_indexes.error",
+    "translation": "Failed to get Elasticsearch indexes"
   },
   {
     "id": "ent.elasticsearch.delete_post.error",
@@ -3838,6 +3842,14 @@
   {
     "id": "ent.ldap.mattermost_user_update",
     "translation": "Mattermost user was updated by AD/LDAP server."
+  },
+  {
+    "id": "ent.ldap.sync.index_job_failed.error",
+    "translation": "LDAP sync worker failed due to the sync job failing"
+  },
+  {
+    "id": "ent.ldap.sync_worker.create_index_job.error",
+    "translation": "LDAP sync worker failed to create the sync job"
   },
   {
     "id": "ent.ldap.syncdone.info",
@@ -4360,20 +4372,24 @@
     "translation": "Unable to enable email batching when clustering is enabled."
   },
   {
-    "id": "model.config.is_valid.elastic_search.aggregate_posts_after_days.app_error",
-    "translation": "Elasticsearch AggregatePostsAfterDays setting must be a number greater than or equal to 1"
-  },
-  {
-    "id": "model.config.is_valid.data_retention.message_retention_days_too_low.app_error",
-    "translation": "DataRetention MessageRetentionDays setting must be at least 1"
+    "id": "model.config.is_valid.data_retention.deletion_job_start_time.app_error",
+    "translation": "Data retention job start time must be a 24-hour time stamp in the form HH:MM."
   },
   {
     "id": "model.config.is_valid.data_retention.file_retention_days_too_low.app_error",
-    "translation": "DataRetention FileRetentionDays setting must be at least 1"
+    "translation": "File retention must be one day or longer."
   },
   {
-    "id": "model.config.is_valid.data_retention.deletion_job_start_time.app_error",
-    "translation": "DataRetention DeletionJobStartTime setting must be set to a time in the format \"hh:mm\""
+    "id": "model.config.is_valid.data_retention.message_retention_days_too_low.app_error",
+    "translation": "Message retention must be one day or longer."
+  },
+  {
+    "id": "model.config.is_valid.localization.available_locales.app_error",
+    "translation": "Available Languages must contain Default Client Language"
+  },
+  {
+    "id": "model.config.is_valid.elastic_search.aggregate_posts_after_days.app_error",
+    "translation": "Elasticsearch AggregatePostsAfterDays setting must be a number greater than or equal to 1"
   },
   {
     "id": "model.config.is_valid.elastic_search.connection_url.app_error",
@@ -5276,16 +5292,16 @@
     "translation": "Limit exceeded for paging"
   },
   {
+    "id": "store.sql_audit.permanent_delete_batch.app_error",
+    "translation": "We encountered an error permanently deleting the batch of audits"
+  },
+  {
     "id": "store.sql_audit.permanent_delete_by_user.app_error",
     "translation": "We encountered an error deleting the audits"
   },
   {
     "id": "store.sql_audit.save.saving.app_error",
     "translation": "We encountered an error saving the audit"
-  },
-  {
-    "id": "store.sql_audit.permanent_delete_batch.app_error",
-    "translation": "We encountered an error permanently deleting the batch of audits"
   },
   {
     "id": "store.sql_channel.analytics_deleted_type_count.app_error",
@@ -5564,6 +5580,10 @@
     "translation": "We couldn't update the command"
   },
   {
+    "id": "store.sql_command.get_by_trigger.app_error",
+    "translation": "We couldn't get the command"
+  },
+  {
     "id": "store.sql_command_webhooks.get.app_error",
     "translation": "We couldn't get the webhook"
   },
@@ -5640,16 +5660,16 @@
     "translation": "We couldn't permanently delete the file info"
   },
   {
+    "id": "store.sql_file_info.permanent_delete_batch.app_error",
+    "translation": "We encountered an error permanently deleting the batch of file infos"
+  },
+  {
     "id": "store.sql_file_info.save.app_error",
     "translation": "We couldn't save the file info"
   },
   {
     "id": "store.sql_file_info.save_or_update.app_error",
     "translation": "We couldn't save or update the file info"
-  },
-  {
-    "id": "store.sql_file_info.permanent_delete_batch.app_error",
-    "translation": "We encountered an error permanently deleting the batch of file infos"
   },
   {
     "id": "store.sql_job.delete.app_error",
@@ -5662,6 +5682,14 @@
   {
     "id": "store.sql_job.get_all.app_error",
     "translation": "We couldn't get the jobs"
+  },
+  {
+    "id": "store.sql_job.get_count_by_status_and_type.app_erro",
+    "translation": "We couldn't get the job count by status and type"
+  },
+  {
+    "id": "store.sql_job.get_newest_job_by_status_and_type.app_error",
+    "translation": "We couldn't get the newest job by status and type"
   },
   {
     "id": "store.sql_job.save.app_error",
@@ -5852,6 +5880,14 @@
     "translation": "We couldn't delete the comments for user"
   },
   {
+    "id": "store.sql_post.permanent_delete_batch.app_error",
+    "translation": "We encountered an error permanently deleting the batch of posts"
+  },
+  {
+    "id": "store.sql_post.permanent_delete_batch.app_error",
+    "translation": "We encountered an error permanently deleting the batch of posts"
+  },
+  {
     "id": "store.sql_post.permanent_delete_by_channel.app_error",
     "translation": "We couldn't delete the posts by channel"
   },
@@ -5882,10 +5918,6 @@
   {
     "id": "store.sql_post.update.app_error",
     "translation": "We couldn't update the Post"
-  },
-  {
-    "id": "store.sql_post.permanent_delete_batch.app_error",
-    "translation": "We encountered an error permanently deleting the batch of posts"
   },
   {
     "id": "store.sql_preference.cleanup_flags_batch.app_error",
@@ -5980,6 +6012,10 @@
     "translation": "Unable to get reactions for post"
   },
   {
+    "id": "store.sql_reaction.permanent_delete_batch.app_error",
+    "translation": "We encountered an error permanently deleting the batch of reactions"
+  },
+  {
     "id": "store.sql_reaction.save.begin.app_error",
     "translation": "Unable to open transaction while saving reaction"
   },
@@ -5990,10 +6026,6 @@
   {
     "id": "store.sql_reaction.save.save.app_error",
     "translation": "Unable to save reaction"
-  },
-  {
-    "id": "store.sql_reaction.permanent_delete_batch.app_error",
-    "translation": "We encountered an error permanently deleting the batch of reactions"
   },
   {
     "id": "store.sql_session.analytics_session_count.app_error",
@@ -6560,6 +6592,18 @@
     "translation": "Analytics not initialized"
   },
   {
+    "id": "utils.file.list_directory.configured.app_error",
+    "translation": "File storage not configured properly. Please configure for either S3 or local server file storage."
+  },
+  {
+    "id": "utils.file.list_directory.local.app_error",
+    "translation": "Encountered an error listing directory from local server file storage."
+  },
+  {
+    "id": "utils.file.list_directory.s3.app_error",
+    "translation": "Encountered an error listing directory from S3."
+  },
+  {
     "id": "utils.file.remove_directory.configured.app_error",
     "translation": "File storage not configured properly. Please configure for either S3 or local server file storage."
   },
@@ -6724,14 +6768,6 @@
     "translation": "Email Verified"
   },
   {
-    "id": "web.error.unsupported_browser.title",
-    "translation": "Unsupported Browser"
-  },
-  {
-    "id": "web.error.unsupported_browser.message",
-    "translation": "Your current browser is not supported. Please upgrade to one of the following browsers:"
-  },
-  {
     "id": "web.error.unsupported_browser.help1",
     "translation": "Google Chrome 43+"
   },
@@ -6750,6 +6786,14 @@
   {
     "id": "web.error.unsupported_browser.help5",
     "translation": "Apple Safari 9+"
+  },
+  {
+    "id": "web.error.unsupported_browser.message",
+    "translation": "Your current browser is not supported. Please upgrade to one of the following browsers:"
+  },
+  {
+    "id": "web.error.unsupported_browser.title",
+    "translation": "Unsupported Browser"
   },
   {
     "id": "web.find_team.title",

@@ -8,8 +8,6 @@ import (
 	"syscall"
 
 	l4g "github.com/alecthomas/log4go"
-	"github.com/mattermost/mattermost-server/jobs"
-	"github.com/mattermost/mattermost-server/store"
 	"github.com/spf13/cobra"
 )
 
@@ -35,19 +33,17 @@ func jobserverCmdF(cmd *cobra.Command, args []string) {
 		panic(err.Error())
 	}
 	defer l4g.Close()
+	defer a.Shutdown()
 
-	jobs.Srv.Store = store.NewLayeredStore(a.Metrics, a.Cluster)
-	defer jobs.Srv.Store.Close()
-
-	jobs.Srv.LoadLicense()
+	a.Jobs.LoadLicense()
 
 	// Run jobs
 	l4g.Info("Starting Mattermost job server")
 	if !noJobs {
-		jobs.Srv.StartWorkers()
+		a.Jobs.StartWorkers()
 	}
 	if !noSchedule {
-		jobs.Srv.StartSchedulers()
+		a.Jobs.StartSchedulers()
 	}
 
 	var signalChan chan os.Signal = make(chan os.Signal)
@@ -57,8 +53,8 @@ func jobserverCmdF(cmd *cobra.Command, args []string) {
 	// Cleanup anything that isn't handled by a defer statement
 	l4g.Info("Stopping Mattermost job server")
 
-	jobs.Srv.StopSchedulers()
-	jobs.Srv.StopWorkers()
+	a.Jobs.StopSchedulers()
+	a.Jobs.StopWorkers()
 
 	l4g.Info("Stopped Mattermost job server")
 }

@@ -6,9 +6,7 @@ package app
 import (
 	"bytes"
 	b64 "encoding/base64"
-	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
@@ -133,7 +131,7 @@ func (a *App) AllowOAuthAppAccessToUser(userId string, authRequest *model.Author
 	}
 
 	authData := &model.AuthData{UserId: userId, ClientId: authRequest.ClientId, CreateAt: model.GetMillis(), RedirectUri: authRequest.RedirectUri, State: authRequest.State, Scope: authRequest.Scope}
-	authData.Code = utils.HashSha256(fmt.Sprintf("%v:%v:%v:%v", authRequest.ClientId, authRequest.RedirectUri, authData.CreateAt, userId))
+	authData.Code = model.NewId() + model.NewId()
 
 	// this saves the OAuth2 app as authorized
 	authorizedApp := model.Preference{
@@ -189,10 +187,6 @@ func (a *App) GetOAuthAccessToken(clientId, grantType, redirectUri, code, secret
 
 		if authData.RedirectUri != redirectUri {
 			return nil, model.NewAppError("GetOAuthAccessToken", "api.oauth.get_access_token.redirect_uri.app_error", nil, "", http.StatusBadRequest)
-		}
-
-		if code != utils.HashSha256(fmt.Sprintf("%v:%v:%v:%v", clientId, redirectUri, authData.CreateAt, authData.UserId)) {
-			return nil, model.NewAppError("GetOAuthAccessToken", "api.oauth.get_access_token.expired_code.app_error", nil, "", http.StatusBadRequest)
 		}
 
 		if result := <-a.Srv.Store.User().Get(authData.UserId); result.Err != nil {
@@ -433,10 +427,7 @@ func (a *App) RevokeAccessToken(token string) *model.AppError {
 }
 
 func (a *App) CompleteOAuth(service string, body io.ReadCloser, teamId string, props map[string]string) (*model.User, *model.AppError) {
-	defer func() {
-		ioutil.ReadAll(body)
-		body.Close()
-	}()
+	defer body.Close()
 
 	action := props["action"]
 
@@ -535,11 +526,11 @@ func (a *App) CompleteSwitchWithOAuth(service string, userData io.ReadCloser, em
 		return nil, result.Err
 	}
 
-	go func() {
+	a.Go(func() {
 		if err := SendSignInChangeEmail(user.Email, strings.Title(service)+" SSO", user.Locale, utils.GetSiteURL()); err != nil {
 			l4g.Error(err.Error())
 		}
-	}()
+	})
 
 	return user, nil
 }
@@ -693,11 +684,9 @@ func (a *App) AuthorizeOAuthUser(w http.ResponseWriter, r *http.Request, service
 	if resp, err := utils.HttpClient(true).Do(req); err != nil {
 		return nil, "", stateProps, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.token_failed.app_error", nil, err.Error(), http.StatusInternalServerError)
 	} else {
-		bodyBytes, _ = ioutil.ReadAll(resp.Body)
-		resp.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
-
 		ar = model.AccessResponseFromJson(resp.Body)
-		defer CloseBody(resp)
+		consumeAndClose(resp)
+
 		if ar == nil {
 			return nil, "", stateProps, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.bad_response.app_error", nil, "response_body="+string(bodyBytes), http.StatusInternalServerError)
 		}
@@ -770,11 +759,11 @@ func (a *App) SwitchOAuthToEmail(email, password, requesterId string) (string, *
 
 	T := utils.GetUserTranslations(user.Locale)
 
-	go func() {
+	a.Go(func() {
 		if err := SendSignInChangeEmail(user.Email, T("api.templates.signin_change_email.body.method_email"), user.Locale, utils.GetSiteURL()); err != nil {
 			l4g.Error(err.Error())
 		}
-	}()
+	})
 
 	if err := a.RevokeAllSessions(requesterId); err != nil {
 		return "", err

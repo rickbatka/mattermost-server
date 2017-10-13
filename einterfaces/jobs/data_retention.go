@@ -7,17 +7,7 @@ import (
 	"github.com/mattermost/mattermost-server/model"
 )
 
-type DataRetentionInterface interface {
+type DataRetentionJobInterface interface {
 	MakeWorker() model.Worker
 	MakeScheduler() model.Scheduler
-}
-
-var theDataRetentionInterface DataRetentionInterface
-
-func RegisterDataRetentionInterface(newInterface DataRetentionInterface) {
-	theDataRetentionInterface = newInterface
-}
-
-func GetDataRetentionInterface() DataRetentionInterface {
-	return theDataRetentionInterface
 }

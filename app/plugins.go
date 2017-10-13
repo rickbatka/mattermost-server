@@ -186,6 +186,10 @@ func (api *BuiltInPluginAPI) GetLdapUserAttributes(userId string, attributes []s
 		return nil, err
 	}
 
+	if user.AuthData == nil {
+		return map[string]string{}, nil
+	}
+
 	return api.app.Ldap.GetUserAttributes(*user.AuthData, attributes)
 }
 
@@ -335,7 +339,7 @@ func (a *App) UnpackAndActivatePlugin(pluginFile io.Reader) (*model.Manifest, *m
 	if manifest.HasClient() {
 		message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_PLUGIN_ACTIVATED, "", "", "", nil)
 		message.Add("manifest", manifest.ClientManifest())
-		Publish(message)
+		a.Publish(message)
 	}
 
 	return manifest, nil
@@ -383,16 +387,18 @@ func (a *App) RemovePlugin(id string) *model.AppError {
 	if manifest.HasClient() {
 		message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_PLUGIN_DEACTIVATED, "", "", "", nil)
 		message.Add("manifest", manifest.ClientManifest())
-		Publish(message)
+		a.Publish(message)
 	}
 
 	return nil
 }
 
 func (a *App) InitPlugins(pluginPath, webappPath string) {
-	a.InitBuiltInPlugins()
-
 	if !utils.IsLicensed() || !*utils.License().Features.FutureFeatures || !*utils.Cfg.PluginSettings.Enable {
+		return
+	}
+
+	if a.PluginEnv != nil {
 		return
 	}
 
@@ -481,9 +487,13 @@ func (a *App) ShutDownPlugins() {
 	if a.PluginEnv == nil {
 		return
 	}
+
+	l4g.Info("Shutting down plugins")
+
 	for _, err := range a.PluginEnv.Shutdown() {
 		l4g.Error(err.Error())
 	}
 	utils.RemoveConfigListener(a.PluginConfigListenerId)
 	a.PluginConfigListenerId = ""
+	a.PluginEnv = nil
 }

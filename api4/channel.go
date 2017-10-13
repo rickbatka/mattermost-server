@@ -709,12 +709,22 @@ func viewChannel(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := c.App.ViewChannel(view, c.Params.UserId, !c.Session.IsMobileApp()); err != nil {
+	times, err := c.App.ViewChannel(view, c.Params.UserId, !c.Session.IsMobileApp())
+
+	if err != nil {
 		c.Err = err
 		return
 	}
 
-	ReturnStatusOK(w)
+	c.App.UpdateLastActivityAtIfNeeded(c.Session)
+
+	// Returning {"status": "OK", ...} for backwards compatability
+	resp := &model.ChannelViewResponse{
+		Status:            "OK",
+		LastViewedAtTimes: times,
+	}
+
+	w.Write([]byte(resp.ToJson()))
 }
 
 func updateChannelMemberRoles(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -813,6 +823,11 @@ func addChannelMember(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	if channel.Type == model.CHANNEL_PRIVATE && !c.App.SessionHasPermissionToChannel(c.Session, channel.Id, model.PERMISSION_MANAGE_PRIVATE_CHANNEL_MEMBERS) {
 		c.SetPermissionError(model.PERMISSION_MANAGE_PRIVATE_CHANNEL_MEMBERS)
+		return
+	}
+
+	if channel.Type == model.CHANNEL_DIRECT || channel.Type == model.CHANNEL_GROUP {
+		c.Err = model.NewAppError("addUserToChannel", "api.channel.add_user_to_channel.type.app_error", nil, "", http.StatusBadRequest)
 		return
 	}
 

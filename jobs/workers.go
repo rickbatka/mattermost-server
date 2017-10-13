@@ -7,36 +7,40 @@ import (
 	"sync"
 
 	l4g "github.com/alecthomas/log4go"
-	ejobs "github.com/mattermost/mattermost-server/einterfaces/jobs"
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/utils"
 )
 
 type Workers struct {
 	startOnce sync.Once
-	watcher   *Watcher
+	Watcher   *Watcher
 
 	DataRetention            model.Worker
 	ElasticsearchIndexing    model.Worker
 	ElasticsearchAggregation model.Worker
+	LdapSync                 model.Worker
 
 	listenerId string
 }
 
-func InitWorkers() *Workers {
+func (srv *JobServer) InitWorkers() *Workers {
 	workers := &Workers{}
-	workers.watcher = MakeWatcher(workers)
+	workers.Watcher = srv.MakeWatcher(workers, DEFAULT_WATCHER_POLLING_INTERVAL)
 
-	if dataRetentionInterface := ejobs.GetDataRetentionInterface(); dataRetentionInterface != nil {
-		workers.DataRetention = dataRetentionInterface.MakeWorker()
+	if srv.DataRetentionJob != nil {
+		workers.DataRetention = srv.DataRetentionJob.MakeWorker()
 	}
 
-	if elasticsearchIndexerInterface := ejobs.GetElasticsearchIndexerInterface(); elasticsearchIndexerInterface != nil {
+	if elasticsearchIndexerInterface := srv.ElasticsearchIndexer; elasticsearchIndexerInterface != nil {
 		workers.ElasticsearchIndexing = elasticsearchIndexerInterface.MakeWorker()
 	}
 
-	if elasticsearchAggregatorInterface := ejobs.GetElasticsearchAggregatorInterface(); elasticsearchAggregatorInterface != nil {
+	if elasticsearchAggregatorInterface := srv.ElasticsearchAggregator; elasticsearchAggregatorInterface != nil {
 		workers.ElasticsearchAggregation = elasticsearchAggregatorInterface.MakeWorker()
+	}
+
+	if ldapSyncInterface := srv.LdapSync; ldapSyncInterface != nil {
+		workers.LdapSync = ldapSyncInterface.MakeWorker()
 	}
 
 	return workers
@@ -58,7 +62,11 @@ func (workers *Workers) Start() *Workers {
 			go workers.ElasticsearchAggregation.Run()
 		}
 
-		go workers.watcher.Start()
+		if workers.LdapSync != nil && *utils.Cfg.LdapSettings.Enable {
+			go workers.LdapSync.Run()
+		}
+
+		go workers.Watcher.Start()
 	})
 
 	workers.listenerId = utils.AddConfigListener(workers.handleConfigChange)
@@ -90,12 +98,20 @@ func (workers *Workers) handleConfigChange(oldConfig *model.Config, newConfig *m
 			workers.ElasticsearchAggregation.Stop()
 		}
 	}
+
+	if workers.LdapSync != nil {
+		if !*oldConfig.LdapSettings.Enable && *newConfig.LdapSettings.Enable {
+			go workers.LdapSync.Run()
+		} else if *oldConfig.LdapSettings.Enable && !*newConfig.LdapSettings.Enable {
+			workers.LdapSync.Stop()
+		}
+	}
 }
 
 func (workers *Workers) Stop() *Workers {
 	utils.RemoveConfigListener(workers.listenerId)
 
-	workers.watcher.Stop()
+	workers.Watcher.Stop()
 
 	if workers.DataRetention != nil && (*utils.Cfg.DataRetentionSettings.EnableMessageDeletion || *utils.Cfg.DataRetentionSettings.EnableFileDeletion) {
 		workers.DataRetention.Stop()
@@ -107,6 +123,10 @@ func (workers *Workers) Stop() *Workers {
 
 	if workers.ElasticsearchAggregation != nil && *utils.Cfg.ElasticsearchSettings.EnableIndexing {
 		workers.ElasticsearchAggregation.Stop()
+	}
+
+	if workers.LdapSync != nil && *utils.Cfg.LdapSettings.Enable {
+		workers.LdapSync.Stop()
 	}
 
 	l4g.Info("Stopped workers")

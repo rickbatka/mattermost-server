@@ -61,12 +61,6 @@ type API struct {
 	BaseRoutes *Routes
 }
 
-func NewRouter() *mux.Router {
-	ret := mux.NewRouter()
-	ret.NotFoundHandler = http.HandlerFunc(Handle404)
-	return ret
-}
-
 func Init(a *app.App, root *mux.Router) *API {
 	api := &API{
 		App:        a,
@@ -121,7 +115,7 @@ func Init(a *app.App, root *mux.Router) *API {
 
 	utils.InitHTML()
 
-	app.InitEmailBatching()
+	a.InitEmailBatching()
 
 	if *utils.Cfg.ServiceSettings.EnableAPIv3 {
 		l4g.Info("API version 3 is scheduled for deprecation. Please see https://api.mattermost.com for details.")

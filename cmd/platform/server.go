@@ -13,7 +13,6 @@ import (
 	"github.com/mattermost/mattermost-server/api"
 	"github.com/mattermost/mattermost-server/api4"
 	"github.com/mattermost/mattermost-server/app"
-	"github.com/mattermost/mattermost-server/jobs"
 	"github.com/mattermost/mattermost-server/manualtesting"
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/utils"
@@ -65,25 +64,33 @@ func runServer(configFileLocation string) {
 		l4g.Error("Problem with file storage settings: " + err.Error())
 	}
 
-	a := app.Global()
-	a.NewServer()
-	a.InitStores()
-	a.Srv.Router = api.NewRouter()
+	a := app.New()
+	defer a.Shutdown()
 
 	if model.BuildEnterpriseReady == "true" {
 		a.LoadLicense()
 	}
 
+	a.InitBuiltInPlugins()
+
 	if webappDir, ok := utils.FindDir(model.CLIENT_DIR); ok {
 		a.InitPlugins("plugins", webappDir+"/plugins")
+
+		utils.AddConfigListener(func(prevCfg *model.Config, cfg *model.Config) {
+			if !*prevCfg.PluginSettings.Enable && *cfg.PluginSettings.Enable {
+				a.InitPlugins("plugins", webappDir+"/plugins")
+			} else if *prevCfg.PluginSettings.Enable && !*cfg.PluginSettings.Enable {
+				a.ShutDownPlugins()
+			}
+		})
 	} else {
 		l4g.Error("Unable to find webapp directory, could not initialize plugins")
 	}
 
-	wsapi.InitRouter()
+	a.StartServer()
 	api4.Init(a, a.Srv.Router, false)
 	api3 := api.Init(a, a.Srv.Router)
-	wsapi.InitApi()
+	wsapi.Init(a, a.Srv.WebSocketRouter)
 	web.Init(api3)
 
 	if !utils.IsLicensed() && len(utils.Cfg.SqlSettings.DataSourceReplicas) > 1 {
@@ -103,8 +110,6 @@ func runServer(configFileLocation string) {
 	}
 
 	resetStatuses(a)
-
-	a.StartServer()
 
 	// If we allow testing then listen for manual testing URL hits
 	if utils.Cfg.ServiceSettings.EnableTesting {
@@ -138,12 +143,11 @@ func runServer(configFileLocation string) {
 		}
 	}
 
-	jobs.Srv.Store = a.Srv.Store
 	if *utils.Cfg.JobSettings.RunJobs {
-		jobs.Srv.StartWorkers()
+		a.Jobs.StartWorkers()
 	}
 	if *utils.Cfg.JobSettings.RunScheduler {
-		jobs.Srv.StartSchedulers()
+		a.Jobs.StartSchedulers()
 	}
 
 	// wait for kill signal before attempting to gracefully shutdown
@@ -160,10 +164,8 @@ func runServer(configFileLocation string) {
 		a.Metrics.StopServer()
 	}
 
-	jobs.Srv.StopSchedulers()
-	jobs.Srv.StopWorkers()
-
-	a.StopServer()
+	a.Jobs.StopSchedulers()
+	a.Jobs.StopWorkers()
 }
 
 func runSecurityJob(a *app.App) {

@@ -15,6 +15,7 @@ import (
 
 func TestGetLogs(t *testing.T) {
 	th := Setup().InitSystemAdmin().InitBasic()
+	defer th.TearDown()
 
 	if _, err := th.BasicClient.GetLogs(); err == nil {
 		t.Fatal("Shouldn't have permissions")
@@ -32,6 +33,7 @@ func TestGetClusterInfos(t *testing.T) {
 		t.SkipNow()
 	}
 	th := Setup().InitSystemAdmin().InitBasic()
+	defer th.TearDown()
 
 	if _, err := th.BasicClient.GetClusterStatus(); err == nil {
 		t.Fatal("Shouldn't have permissions")
@@ -44,6 +46,7 @@ func TestGetClusterInfos(t *testing.T) {
 
 func TestGetAllAudits(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
 
 	if _, err := th.BasicClient.GetAllAudits(); err == nil {
 		t.Fatal("Shouldn't have permissions")
@@ -58,6 +61,7 @@ func TestGetAllAudits(t *testing.T) {
 
 func TestGetConfig(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
 
 	if _, err := th.BasicClient.GetConfig(); err == nil {
 		t.Fatal("Shouldn't have permissions")
@@ -104,6 +108,7 @@ func TestGetConfig(t *testing.T) {
 
 func TestReloadConfig(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
 
 	if _, err := th.BasicClient.ReloadConfig(); err == nil {
 		t.Fatal("Shouldn't have permissions")
@@ -119,6 +124,7 @@ func TestReloadConfig(t *testing.T) {
 
 func TestInvalidateAllCache(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
 
 	if _, err := th.BasicClient.InvalidateAllCaches(); err == nil {
 		t.Fatal("Shouldn't have permissions")
@@ -131,6 +137,7 @@ func TestInvalidateAllCache(t *testing.T) {
 
 func TestSaveConfig(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
 
 	if _, err := th.BasicClient.SaveConfig(utils.Cfg); err == nil {
 		t.Fatal("Shouldn't have permissions")
@@ -147,6 +154,7 @@ func TestSaveConfig(t *testing.T) {
 
 func TestRecycleDatabaseConnection(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
 
 	if _, err := th.BasicClient.RecycleDatabaseConnection(); err == nil {
 		t.Fatal("Shouldn't have permissions")
@@ -159,6 +167,7 @@ func TestRecycleDatabaseConnection(t *testing.T) {
 
 func TestEmailTest(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
 
 	SendEmailNotifications := utils.Cfg.EmailSettings.SendEmailNotifications
 	SMTPServer := utils.Cfg.EmailSettings.SMTPServer
@@ -191,6 +200,7 @@ func TestEmailTest(t *testing.T) {
 
 func TestLdapTest(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
 
 	if _, err := th.BasicClient.TestLdap(utils.Cfg); err == nil {
 		t.Fatal("Shouldn't have permissions")
@@ -203,6 +213,8 @@ func TestLdapTest(t *testing.T) {
 
 func TestGetTeamAnalyticsStandard(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
+
 	th.CreatePrivateChannel(th.BasicClient, th.BasicTeam)
 
 	if _, err := th.BasicClient.GetTeamAnalytics(th.BasicTeam.Id, "standard"); err == nil {
@@ -432,6 +444,7 @@ func TestUserCountsWithPostsByDay(t *testing.T) {
 
 func TestGetTeamAnalyticsExtra(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
 
 	th.CreatePost(th.BasicClient, th.BasicChannel)
 
@@ -568,6 +581,7 @@ func TestGetTeamAnalyticsExtra(t *testing.T) {
 
 func TestAdminResetMfa(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
 
 	if _, err := th.BasicClient.AdminResetMfa("12345678901234567890123456"); err == nil {
 		t.Fatal("should have failed - not an admin")
@@ -590,12 +604,14 @@ func TestAdminResetMfa(t *testing.T) {
 
 func TestAdminResetPassword(t *testing.T) {
 	th := Setup().InitSystemAdmin()
+	defer th.TearDown()
+
 	Client := th.SystemAdminClient
 	team := th.SystemAdminTeam
 
 	user := &model.User{Email: strings.ToLower(model.NewId()) + "success+test@simulator.amazonses.com", Nickname: "Corey Hulen", Password: "passwd1"}
 	user = Client.Must(Client.CreateUser(user, "")).Data.(*model.User)
-	LinkUserToTeam(user, team)
+	th.LinkUserToTeam(user, team)
 	store.Must(th.App.Srv.Store.User().VerifyEmail(user.Id))
 
 	if _, err := Client.AdminResetPassword("", "newpwd1"); err == nil {
@@ -617,7 +633,7 @@ func TestAdminResetPassword(t *testing.T) {
 	authData := model.NewId()
 	user2 := &model.User{Email: strings.ToLower(model.NewId()) + "success+test@simulator.amazonses.com", Nickname: "Corey Hulen", AuthData: &authData, AuthService: "random"}
 	user2 = Client.Must(Client.CreateUser(user2, "")).Data.(*model.User)
-	LinkUserToTeam(user2, team)
+	th.LinkUserToTeam(user2, team)
 	store.Must(th.App.Srv.Store.User().VerifyEmail(user2.Id))
 
 	if _, err := Client.AdminResetPassword(user.Id, "newpwd1"); err != nil {
@@ -635,6 +651,8 @@ func TestAdminResetPassword(t *testing.T) {
 
 func TestAdminLdapSyncNow(t *testing.T) {
 	th := Setup().InitSystemAdmin()
+	defer th.TearDown()
+
 	Client := th.SystemAdminClient
 
 	if _, err := Client.LdapSyncNow(); err != nil {
@@ -645,6 +663,7 @@ func TestAdminLdapSyncNow(t *testing.T) {
 // Needs more work
 func TestGetRecentlyActiveUsers(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
 
 	if userMap, err := th.BasicClient.GetRecentlyActiveUsers(th.BasicTeam.Id); err != nil {
 		t.Fatal(err)
@@ -655,6 +674,8 @@ func TestGetRecentlyActiveUsers(t *testing.T) {
 
 func TestDisableAPIv3(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
+
 	Client := th.BasicClient
 
 	enableAPIv3 := *utils.Cfg.ServiceSettings.EnableAPIv3

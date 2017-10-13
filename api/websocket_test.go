@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/mattermost/mattermost-server/app"
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/utils"
 )
@@ -117,6 +116,8 @@ import (
 
 func TestWebSocket(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
+
 	WebSocketClient, err := th.CreateWebSocketClient()
 	if err != nil {
 		t.Fatal(err)
@@ -178,6 +179,8 @@ func TestWebSocket(t *testing.T) {
 
 func TestWebSocketEvent(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
+
 	WebSocketClient, err := th.CreateWebSocketClient()
 	if err != nil {
 		t.Fatal(err)
@@ -195,7 +198,7 @@ func TestWebSocketEvent(t *testing.T) {
 	omitUser["somerandomid"] = true
 	evt1 := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_TYPING, "", th.BasicChannel.Id, "", omitUser)
 	evt1.Add("user_id", "somerandomid")
-	app.Publish(evt1)
+	th.App.Publish(evt1)
 
 	time.Sleep(300 * time.Millisecond)
 
@@ -224,7 +227,7 @@ func TestWebSocketEvent(t *testing.T) {
 	}
 
 	evt2 := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_TYPING, "", "somerandomid", "", nil)
-	go app.Publish(evt2)
+	go th.App.Publish(evt2)
 	time.Sleep(300 * time.Millisecond)
 
 	eventHit = false
@@ -253,6 +256,8 @@ func TestWebSocketEvent(t *testing.T) {
 
 func TestCreateDirectChannelWithSocket(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
+
 	Client := th.BasicClient
 	user2 := th.BasicUser2
 
@@ -315,7 +320,8 @@ func TestCreateDirectChannelWithSocket(t *testing.T) {
 }
 
 func TestWebsocketOriginSecurity(t *testing.T) {
-	Setup().InitBasic()
+	th := Setup().InitBasic()
+	defer th.TearDown()
 
 	url := "ws://localhost" + *utils.Cfg.ServiceSettings.ListenAddress
 
@@ -372,13 +378,4 @@ func TestWebsocketOriginSecurity(t *testing.T) {
 	}
 
 	*utils.Cfg.ServiceSettings.AllowCorsFrom = ""
-}
-
-func TestZZWebSocketTearDown(t *testing.T) {
-	// *IMPORTANT* - Kind of hacky
-	// This should be the last function in any test file
-	// that calls Setup()
-	// Should be in the last file too sorted by name
-	time.Sleep(2 * time.Second)
-	TearDown()
 }

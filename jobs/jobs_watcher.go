@@ -12,21 +12,25 @@ import (
 )
 
 const (
-	WATCHER_POLLING_INTERVAL = 15000
+	DEFAULT_WATCHER_POLLING_INTERVAL = 15000
 )
 
 type Watcher struct {
+	srv     *JobServer
 	workers *Workers
 
-	stop    chan bool
-	stopped chan bool
+	stop            chan bool
+	stopped         chan bool
+	pollingInterval int
 }
 
-func MakeWatcher(workers *Workers) *Watcher {
+func (srv *JobServer) MakeWatcher(workers *Workers, pollingInterval int) *Watcher {
 	return &Watcher{
-		stop:    make(chan bool, 1),
-		stopped: make(chan bool, 1),
-		workers: workers,
+		stop:            make(chan bool, 1),
+		stopped:         make(chan bool, 1),
+		pollingInterval: pollingInterval,
+		workers:         workers,
+		srv:             srv,
 	}
 }
 
@@ -36,7 +40,7 @@ func (watcher *Watcher) Start() {
 	// Delay for some random number of milliseconds before starting to ensure that multiple
 	// instances of the jobserver  don't poll at a time too close to each other.
 	rand.Seed(time.Now().UTC().UnixNano())
-	_ = <-time.After(time.Duration(rand.Intn(WATCHER_POLLING_INTERVAL)) * time.Millisecond)
+	_ = <-time.After(time.Duration(rand.Intn(watcher.pollingInterval)) * time.Millisecond)
 
 	defer func() {
 		l4g.Debug("Watcher Finished")
@@ -48,7 +52,7 @@ func (watcher *Watcher) Start() {
 		case <-watcher.stop:
 			l4g.Debug("Watcher: Received stop signal")
 			return
-		case <-time.After(WATCHER_POLLING_INTERVAL * time.Millisecond):
+		case <-time.After(time.Duration(watcher.pollingInterval) * time.Millisecond):
 			watcher.PollAndNotify()
 		}
 	}
@@ -61,7 +65,7 @@ func (watcher *Watcher) Stop() {
 }
 
 func (watcher *Watcher) PollAndNotify() {
-	if result := <-Srv.Store.Job().GetAllByStatus(model.JOB_STATUS_PENDING); result.Err != nil {
+	if result := <-watcher.srv.Store.Job().GetAllByStatus(model.JOB_STATUS_PENDING); result.Err != nil {
 		l4g.Error("Error occured getting all pending statuses: %v", result.Err.Error())
 	} else {
 		jobs := result.Data.([]*model.Job)
@@ -85,6 +89,13 @@ func (watcher *Watcher) PollAndNotify() {
 				if watcher.workers.ElasticsearchAggregation != nil {
 					select {
 					case watcher.workers.ElasticsearchAggregation.JobChannel() <- *job:
+					default:
+					}
+				}
+			} else if job.Type == model.JOB_TYPE_LDAP_SYNC {
+				if watcher.workers.LdapSync != nil {
+					select {
+					case watcher.workers.LdapSync.JobChannel() <- *job:
 					default:
 					}
 				}

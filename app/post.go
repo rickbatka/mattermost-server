@@ -51,7 +51,7 @@ func (a *App) CreatePostAsUser(post *model.Post) (*model.Post, *model.AppError) 
 			}
 
 			T := utils.GetUserTranslations(user.Locale)
-			SendEphemeralPost(
+			a.SendEphemeralPost(
 				post.UserId,
 				&model.Post{
 					ChannelId: channel.Id,
@@ -75,7 +75,9 @@ func (a *App) CreatePostAsUser(post *model.Post) (*model.Post, *model.AppError) 
 			if *utils.Cfg.ServiceSettings.EnableChannelViewedMessages {
 				message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_CHANNEL_VIEWED, "", "", post.UserId, nil)
 				message.Add("channel_id", post.ChannelId)
-				go Publish(message)
+				a.Go(func() {
+					a.Publish(message)
+				})
 			}
 		}
 
@@ -114,7 +116,7 @@ func (a *App) CreatePost(post *model.Post, channel *model.Channel, triggerWebhoo
 		!post.IsSystemMessage() &&
 		channel.Name == model.DEFAULT_CHANNEL &&
 		!CheckIfRolesGrantPermission(user.GetRoles(), model.PERMISSION_MANAGE_SYSTEM.Id) {
-		return nil, model.NewLocAppError("createPost", "api.post.create_post.town_square_read_only", nil, "")
+		return nil, model.NewAppError("createPost", "api.post.create_post.town_square_read_only", nil, "", http.StatusForbidden)
 	}
 
 	// Verify the parent/child relationships are correct
@@ -152,7 +154,9 @@ func (a *App) CreatePost(post *model.Post, channel *model.Channel, triggerWebhoo
 
 	esInterface := a.Elasticsearch
 	if esInterface != nil && *utils.Cfg.ElasticsearchSettings.EnableIndexing {
-		go esInterface.IndexPost(rpost, channel.TeamId)
+		a.Go(func() {
+			esInterface.IndexPost(rpost, channel.TeamId)
+		})
 	}
 
 	if a.Metrics != nil {
@@ -207,11 +211,11 @@ func (a *App) handlePostEvents(post *model.Post, user *model.User, channel *mode
 	}
 
 	if triggerWebhooks {
-		go func() {
+		a.Go(func() {
 			if err := a.handleWebhookEvents(post, team, channel, user); err != nil {
 				l4g.Error(err.Error())
 			}
-		}()
+		})
 	}
 
 	return nil
@@ -239,7 +243,7 @@ func parseSlackLinksToMarkdown(text string) string {
 	return linkWithTextRegex.ReplaceAllString(text, "[${2}](${1})")
 }
 
-func SendEphemeralPost(userId string, post *model.Post) *model.Post {
+func (a *App) SendEphemeralPost(userId string, post *model.Post) *model.Post {
 	post.Type = model.POST_EPHEMERAL
 
 	// fill in fields which haven't been specified which have sensible defaults
@@ -256,7 +260,9 @@ func SendEphemeralPost(userId string, post *model.Post) *model.Post {
 	message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_EPHEMERAL_MESSAGE, "", post.ChannelId, userId, nil)
 	message.Add("post", post.ToJson())
 
-	go Publish(message)
+	a.Go(func() {
+		a.Publish(message)
+	})
 
 	return post
 }
@@ -321,16 +327,16 @@ func (a *App) UpdatePost(post *model.Post, safeUpdate bool) (*model.Post, *model
 
 		esInterface := a.Elasticsearch
 		if esInterface != nil && *utils.Cfg.ElasticsearchSettings.EnableIndexing {
-			go func() {
+			a.Go(func() {
 				if rchannel := <-a.Srv.Store.Channel().GetForPost(rpost.Id); rchannel.Err != nil {
 					l4g.Error("Couldn't get channel %v for post %v for Elasticsearch indexing.", rpost.ChannelId, rpost.Id)
 				} else {
 					esInterface.IndexPost(rpost, rchannel.Data.(*model.Channel).TeamId)
 				}
-			}()
+			})
 		}
 
-		sendUpdatedPostEvent(rpost)
+		a.sendUpdatedPostEvent(rpost)
 
 		a.InvalidateCacheForChannelPosts(rpost.ChannelId)
 
@@ -351,17 +357,16 @@ func (a *App) PatchPost(postId string, patch *model.PostPatch) (*model.Post, *mo
 		return nil, err
 	}
 
-	sendUpdatedPostEvent(updatedPost)
-	a.InvalidateCacheForChannelPosts(updatedPost.ChannelId)
-
 	return updatedPost, nil
 }
 
-func sendUpdatedPostEvent(post *model.Post) {
+func (a *App) sendUpdatedPostEvent(post *model.Post) {
 	message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_POST_EDITED, "", post.ChannelId, "", nil)
 	message.Add("post", post.ToJson())
 
-	go Publish(message)
+	a.Go(func() {
+		a.Publish(message)
+	})
 }
 
 func (a *App) GetPostsPage(channelId string, page int, perPage int) (*model.PostList, *model.AppError) {
@@ -502,13 +507,21 @@ func (a *App) DeletePost(postId string) (*model.Post, *model.AppError) {
 		message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_POST_DELETED, "", post.ChannelId, "", nil)
 		message.Add("post", post.ToJson())
 
-		go Publish(message)
-		go a.DeletePostFiles(post)
-		go a.DeleteFlaggedPosts(post.Id)
+		a.Go(func() {
+			a.Publish(message)
+		})
+		a.Go(func() {
+			a.DeletePostFiles(post)
+		})
+		a.Go(func() {
+			a.DeleteFlaggedPosts(post.Id)
+		})
 
 		esInterface := a.Elasticsearch
 		if esInterface != nil && *utils.Cfg.ElasticsearchSettings.EnableIndexing {
-			go esInterface.DeletePost(post)
+			a.Go(func() {
+				esInterface.DeletePost(post)
+			})
 		}
 
 		a.InvalidateCacheForChannelPosts(post.ChannelId)
@@ -597,6 +610,10 @@ func (a *App) SearchPostsInTeam(terms string, userId string, teamId string, isOr
 
 		return postList, nil
 	} else {
+		if !*utils.Cfg.ServiceSettings.EnablePostSearch {
+			return nil, model.NewAppError("SearchPostsInTeam", "store.sql_post.search.disabled", nil, fmt.Sprintf("teamId=%v userId=%v", teamId, userId), http.StatusNotImplemented)
+		}
+
 		channels := []store.StoreChannel{}
 
 		for _, params := range paramsList {
@@ -659,7 +676,7 @@ func GetOpenGraphMetadata(url string) *opengraph.OpenGraph {
 		l4g.Error("GetOpenGraphMetadata request failed for url=%v with err=%v", url, err.Error())
 		return og
 	}
-	defer CloseBody(res)
+	defer consumeAndClose(res)
 
 	if err := og.ProcessHTML(res.Body); err != nil {
 		l4g.Error("GetOpenGraphMetadata processing failed for url=%v with err=%v", url, err.Error())
@@ -695,7 +712,7 @@ func (a *App) DoPostAction(postId string, actionId string, userId string) *model
 	if err != nil {
 		return model.NewAppError("DoPostAction", "api.post.do_action.action_integration.app_error", nil, "err="+err.Error(), http.StatusBadRequest)
 	}
-	defer resp.Body.Close()
+	defer consumeAndClose(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return model.NewAppError("DoPostAction", "api.post.do_action.action_integration.app_error", nil, fmt.Sprintf("status=%v", resp.StatusCode), http.StatusBadRequest)
@@ -724,7 +741,7 @@ func (a *App) DoPostAction(postId string, actionId string, userId string) *model
 		}
 		ephemeralPost.UserId = userId
 		ephemeralPost.AddProp("from_webhook", "true")
-		SendEphemeralPost(userId, ephemeralPost)
+		a.SendEphemeralPost(userId, ephemeralPost)
 	}
 
 	return nil

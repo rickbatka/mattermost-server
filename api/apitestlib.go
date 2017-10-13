@@ -4,12 +4,15 @@
 package api
 
 import (
+	"net"
 	"time"
 
 	"github.com/mattermost/mattermost-server/api4"
 	"github.com/mattermost/mattermost-server/app"
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/store"
+	"github.com/mattermost/mattermost-server/store/sqlstore"
+	"github.com/mattermost/mattermost-server/store/storetest"
 	"github.com/mattermost/mattermost-server/utils"
 	"github.com/mattermost/mattermost-server/wsapi"
 
@@ -33,32 +36,57 @@ type TestHelper struct {
 	SystemAdminChannel *model.Channel
 }
 
+type persistentTestStore struct {
+	store.Store
+}
+
+func (*persistentTestStore) Close() {}
+
+var testStoreContainer *storetest.RunningContainer
+var testStore *persistentTestStore
+
+// UseTestStore sets the container and corresponding settings to use for tests. Once the tests are
+// complete (e.g. at the end of your TestMain implementation), you should call StopTestStore.
+func UseTestStore(container *storetest.RunningContainer, settings *model.SqlSettings) {
+	testStoreContainer = container
+	testStore = &persistentTestStore{store.NewLayeredStore(sqlstore.NewSqlSupplier(*settings, nil), nil, nil)}
+}
+
+func StopTestStore() {
+	if testStoreContainer != nil {
+		testStoreContainer.Stop()
+		testStoreContainer = nil
+	}
+}
+
 func setupTestHelper(enterprise bool) *TestHelper {
-	th := &TestHelper{
-		App: app.Global(),
-	}
-
-	if th.App.Srv == nil {
+	if utils.T == nil {
 		utils.TranslationsPreInit()
-		utils.LoadConfig("config.json")
-		utils.InitTranslations(utils.Cfg.LocalizationSettings)
-		*utils.Cfg.TeamSettings.MaxUsersPerTeam = 50
-		*utils.Cfg.RateLimitSettings.Enable = false
-		utils.Cfg.EmailSettings.SendEmailNotifications = true
-		utils.DisableDebugLogForTest()
-		th.App.NewServer()
-		th.App.InitStores()
-		th.App.Srv.Router = NewRouter()
-		wsapi.InitRouter()
-		th.App.StartServer()
-		api4.Init(th.App, th.App.Srv.Router, false)
-		Init(th.App, th.App.Srv.Router)
-		wsapi.InitApi()
-		utils.EnableDebugLogForTest()
-		th.App.Srv.Store.MarkSystemRanUnitTests()
-
-		*utils.Cfg.TeamSettings.EnableOpenServer = true
 	}
+	utils.LoadConfig("config.json")
+	utils.InitTranslations(utils.Cfg.LocalizationSettings)
+
+	var options []app.Option
+	if testStore != nil {
+		options = append(options, app.StoreOverride(testStore))
+	}
+
+	th := &TestHelper{
+		App: app.New(options...),
+	}
+
+	*utils.Cfg.TeamSettings.MaxUsersPerTeam = 50
+	*utils.Cfg.RateLimitSettings.Enable = false
+	utils.Cfg.EmailSettings.SendEmailNotifications = true
+	utils.DisableDebugLogForTest()
+	th.App.StartServer()
+	api4.Init(th.App, th.App.Srv.Router, false)
+	Init(th.App, th.App.Srv.Router)
+	wsapi.Init(th.App, th.App.Srv.WebSocketRouter)
+	utils.EnableDebugLogForTest()
+	th.App.Srv.Store.MarkSystemRanUnitTests()
+
+	*utils.Cfg.TeamSettings.EnableOpenServer = true
 
 	utils.SetIsLicensed(enterprise)
 	if enterprise {
@@ -86,14 +114,17 @@ func ReloadConfigForSetup() {
 }
 
 func (me *TestHelper) InitBasic() *TestHelper {
+	me.waitForConnectivity()
+
 	me.BasicClient = me.CreateClient()
 	me.BasicUser = me.CreateUser(me.BasicClient)
+	me.App.UpdateUserRoles(me.BasicUser.Id, model.ROLE_SYSTEM_USER.Id)
 	me.LoginBasic()
 	me.BasicTeam = me.CreateTeam(me.BasicClient)
-	LinkUserToTeam(me.BasicUser, me.BasicTeam)
-	UpdateUserToNonTeamAdmin(me.BasicUser, me.BasicTeam)
+	me.LinkUserToTeam(me.BasicUser, me.BasicTeam)
+	me.UpdateUserToNonTeamAdmin(me.BasicUser, me.BasicTeam)
 	me.BasicUser2 = me.CreateUser(me.BasicClient)
-	LinkUserToTeam(me.BasicUser2, me.BasicTeam)
+	me.LinkUserToTeam(me.BasicUser2, me.BasicTeam)
 	me.BasicClient.SetTeamId(me.BasicTeam.Id)
 	me.BasicChannel = me.CreateChannel(me.BasicClient, me.BasicTeam)
 	me.BasicPost = me.CreatePost(me.BasicClient, me.BasicChannel)
@@ -105,17 +136,30 @@ func (me *TestHelper) InitBasic() *TestHelper {
 }
 
 func (me *TestHelper) InitSystemAdmin() *TestHelper {
+	me.waitForConnectivity()
+
 	me.SystemAdminClient = me.CreateClient()
 	me.SystemAdminUser = me.CreateUser(me.SystemAdminClient)
 	me.SystemAdminUser.Password = "Password1"
 	me.LoginSystemAdmin()
 	me.SystemAdminTeam = me.CreateTeam(me.SystemAdminClient)
-	LinkUserToTeam(me.SystemAdminUser, me.SystemAdminTeam)
+	me.LinkUserToTeam(me.SystemAdminUser, me.SystemAdminTeam)
 	me.SystemAdminClient.SetTeamId(me.SystemAdminTeam.Id)
 	me.App.UpdateUserRoles(me.SystemAdminUser.Id, model.ROLE_SYSTEM_USER.Id+" "+model.ROLE_SYSTEM_ADMIN.Id)
 	me.SystemAdminChannel = me.CreateChannel(me.SystemAdminClient, me.SystemAdminTeam)
 
 	return me
+}
+
+func (me *TestHelper) waitForConnectivity() {
+	for i := 0; i < 1000; i++ {
+		_, err := net.Dial("tcp", "localhost"+*utils.Cfg.ServiceSettings.ListenAddress)
+		if err == nil {
+			return
+		}
+		time.Sleep(time.Millisecond * 20)
+	}
+	panic("unable to connect")
 }
 
 func (me *TestHelper) CreateClient() *model.Client {
@@ -159,10 +203,10 @@ func (me *TestHelper) CreateUser(client *model.Client) *model.User {
 	return ruser
 }
 
-func LinkUserToTeam(user *model.User, team *model.Team) {
+func (me *TestHelper) LinkUserToTeam(user *model.User, team *model.Team) {
 	utils.DisableDebugLogForTest()
 
-	err := app.Global().JoinUserToTeam(team, user, "")
+	err := me.App.JoinUserToTeam(team, user, "")
 	if err != nil {
 		l4g.Error(err.Error())
 		l4g.Close()
@@ -173,11 +217,11 @@ func LinkUserToTeam(user *model.User, team *model.Team) {
 	utils.EnableDebugLogForTest()
 }
 
-func UpdateUserToTeamAdmin(user *model.User, team *model.Team) {
+func (me *TestHelper) UpdateUserToTeamAdmin(user *model.User, team *model.Team) {
 	utils.DisableDebugLogForTest()
 
 	tm := &model.TeamMember{TeamId: team.Id, UserId: user.Id, Roles: model.ROLE_TEAM_USER.Id + " " + model.ROLE_TEAM_ADMIN.Id}
-	if tmr := <-app.Global().Srv.Store.Team().UpdateMember(tm); tmr.Err != nil {
+	if tmr := <-me.App.Srv.Store.Team().UpdateMember(tm); tmr.Err != nil {
 		utils.EnableDebugLogForTest()
 		l4g.Error(tmr.Err.Error())
 		l4g.Close()
@@ -187,11 +231,11 @@ func UpdateUserToTeamAdmin(user *model.User, team *model.Team) {
 	utils.EnableDebugLogForTest()
 }
 
-func UpdateUserToNonTeamAdmin(user *model.User, team *model.Team) {
+func (me *TestHelper) UpdateUserToNonTeamAdmin(user *model.User, team *model.Team) {
 	utils.DisableDebugLogForTest()
 
 	tm := &model.TeamMember{TeamId: team.Id, UserId: user.Id, Roles: model.ROLE_TEAM_USER.Id}
-	if tmr := <-app.Global().Srv.Store.Team().UpdateMember(tm); tmr.Err != nil {
+	if tmr := <-me.App.Srv.Store.Team().UpdateMember(tm); tmr.Err != nil {
 		utils.EnableDebugLogForTest()
 		l4g.Error(tmr.Err.Error())
 		l4g.Close()
@@ -201,13 +245,13 @@ func UpdateUserToNonTeamAdmin(user *model.User, team *model.Team) {
 	utils.EnableDebugLogForTest()
 }
 
-func MakeUserChannelAdmin(user *model.User, channel *model.Channel) {
+func (me *TestHelper) MakeUserChannelAdmin(user *model.User, channel *model.Channel) {
 	utils.DisableDebugLogForTest()
 
-	if cmr := <-app.Global().Srv.Store.Channel().GetMember(channel.Id, user.Id); cmr.Err == nil {
+	if cmr := <-me.App.Srv.Store.Channel().GetMember(channel.Id, user.Id); cmr.Err == nil {
 		cm := cmr.Data.(*model.ChannelMember)
 		cm.Roles = "channel_admin channel_user"
-		if sr := <-app.Global().Srv.Store.Channel().UpdateMember(cm); sr.Err != nil {
+		if sr := <-me.App.Srv.Store.Channel().UpdateMember(cm); sr.Err != nil {
 			utils.EnableDebugLogForTest()
 			panic(sr.Err)
 		}
@@ -219,13 +263,13 @@ func MakeUserChannelAdmin(user *model.User, channel *model.Channel) {
 	utils.EnableDebugLogForTest()
 }
 
-func MakeUserChannelUser(user *model.User, channel *model.Channel) {
+func (me *TestHelper) MakeUserChannelUser(user *model.User, channel *model.Channel) {
 	utils.DisableDebugLogForTest()
 
-	if cmr := <-app.Global().Srv.Store.Channel().GetMember(channel.Id, user.Id); cmr.Err == nil {
+	if cmr := <-me.App.Srv.Store.Channel().GetMember(channel.Id, user.Id); cmr.Err == nil {
 		cm := cmr.Data.(*model.ChannelMember)
 		cm.Roles = "channel_user"
-		if sr := <-app.Global().Srv.Store.Channel().UpdateMember(cm); sr.Err != nil {
+		if sr := <-me.App.Srv.Store.Channel().UpdateMember(cm); sr.Err != nil {
 			utils.EnableDebugLogForTest()
 			panic(sr.Err)
 		}
@@ -308,8 +352,10 @@ func (me *TestHelper) LoginSystemAdmin() {
 	utils.EnableDebugLogForTest()
 }
 
-func TearDown() {
-	if app.Global().Srv != nil {
-		app.Global().StopServer()
+func (me *TestHelper) TearDown() {
+	me.App.Shutdown()
+	if err := recover(); err != nil {
+		StopTestStore()
+		panic(err)
 	}
 }

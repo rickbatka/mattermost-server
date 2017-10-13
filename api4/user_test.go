@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-server/app"
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/utils"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +19,7 @@ import (
 
 func TestCreateUser(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	AdminClient := th.SystemAdminClient
 
@@ -88,7 +89,7 @@ func TestCreateUser(t *testing.T) {
 
 func TestCreateUserWithHash(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	t.Run("CreateWithHashHappyPath", func(t *testing.T) {
@@ -231,7 +232,7 @@ func TestCreateUserWithHash(t *testing.T) {
 
 func TestCreateUserWithInviteId(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	AdminClient := th.SystemAdminClient
 
@@ -333,7 +334,7 @@ func TestCreateUserWithInviteId(t *testing.T) {
 
 func TestGetMe(t *testing.T) {
 	th := Setup().InitBasic()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	ruser, resp := Client.GetMe("")
@@ -350,7 +351,7 @@ func TestGetMe(t *testing.T) {
 
 func TestGetUser(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	user := th.CreateUser()
@@ -414,7 +415,7 @@ func TestGetUser(t *testing.T) {
 
 func TestGetUserByUsername(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	user := th.BasicUser
@@ -475,7 +476,7 @@ func TestGetUserByUsername(t *testing.T) {
 
 func TestGetUserByEmail(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	user := th.CreateUser()
@@ -539,7 +540,7 @@ func TestGetUserByEmail(t *testing.T) {
 
 func TestSearchUsers(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	search := &model.UserSearch{Term: th.BasicUser.Username}
@@ -728,7 +729,7 @@ func findUserInList(id string, users []*model.User) bool {
 
 func TestAutocompleteUsers(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	teamId := th.BasicTeam.Id
 	channelId := th.BasicChannel.Id
@@ -855,7 +856,7 @@ func TestAutocompleteUsers(t *testing.T) {
 
 func TestGetProfileImage(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	user := th.BasicUser
 
@@ -888,6 +889,8 @@ func TestGetProfileImage(t *testing.T) {
 
 func TestGetUsersByIds(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
+
 	Client := th.Client
 
 	users, resp := Client.GetUsersByIds([]string{th.BasicUser.Id})
@@ -920,6 +923,8 @@ func TestGetUsersByIds(t *testing.T) {
 
 func TestGetUsersByUsernames(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
+
 	Client := th.Client
 
 	users, resp := Client.GetUsersByUsernames([]string{th.BasicUser.Username})
@@ -952,7 +957,7 @@ func TestGetUsersByUsernames(t *testing.T) {
 
 func TestUpdateUser(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	user := th.CreateUser()
@@ -994,6 +999,15 @@ func TestUpdateUser(t *testing.T) {
 		}
 	}
 
+	session, _ := th.App.GetSession(Client.AuthToken)
+	session.IsOAuth = true
+	app.AddSessionToCache(session)
+
+	ruser.Id = user.Id
+	ruser.Email = GenerateTestEmail()
+	_, resp = Client.UpdateUser(ruser)
+	CheckForbiddenStatus(t, resp)
+
 	Client.Logout()
 	_, resp = Client.UpdateUser(user)
 	CheckUnauthorizedStatus(t, resp)
@@ -1008,7 +1022,7 @@ func TestUpdateUser(t *testing.T) {
 
 func TestPatchUser(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	user := th.CreateUser()
@@ -1073,6 +1087,15 @@ func TestPatchUser(t *testing.T) {
 		}
 	}
 
+	session, _ := th.App.GetSession(Client.AuthToken)
+	session.IsOAuth = true
+	app.AddSessionToCache(session)
+
+	patch.Email = new(string)
+	*patch.Email = GenerateTestEmail()
+	_, resp = Client.PatchUser(user.Id, patch)
+	CheckForbiddenStatus(t, resp)
+
 	Client.Logout()
 	_, resp = Client.PatchUser(user.Id, patch)
 	CheckUnauthorizedStatus(t, resp)
@@ -1087,6 +1110,8 @@ func TestPatchUser(t *testing.T) {
 
 func TestDeleteUser(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
+
 	Client := th.Client
 
 	user := th.BasicUser
@@ -1117,6 +1142,8 @@ func TestDeleteUser(t *testing.T) {
 
 func TestUpdateUserRoles(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
+
 	Client := th.Client
 	SystemAdminClient := th.SystemAdminClient
 
@@ -1141,6 +1168,8 @@ func TestUpdateUserRoles(t *testing.T) {
 
 func TestUpdateUserActive(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
+
 	Client := th.Client
 	SystemAdminClient := th.SystemAdminClient
 	user := th.BasicUser
@@ -1184,7 +1213,7 @@ func TestUpdateUserActive(t *testing.T) {
 
 func TestGetUsers(t *testing.T) {
 	th := Setup().InitBasic()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	rusers, resp := Client.GetUsers(0, 60, "")
@@ -1226,7 +1255,7 @@ func TestGetUsers(t *testing.T) {
 
 func TestGetNewUsersInTeam(t *testing.T) {
 	th := Setup().InitBasic()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	teamId := th.BasicTeam.Id
 
@@ -1255,7 +1284,7 @@ func TestGetNewUsersInTeam(t *testing.T) {
 
 func TestGetRecentlyActiveUsersInTeam(t *testing.T) {
 	th := Setup().InitBasic()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	teamId := th.BasicTeam.Id
 
@@ -1284,7 +1313,7 @@ func TestGetRecentlyActiveUsersInTeam(t *testing.T) {
 
 func TestGetUsersWithoutTeam(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	SystemAdminClient := th.SystemAdminClient
 
@@ -1300,7 +1329,7 @@ func TestGetUsersWithoutTeam(t *testing.T) {
 		Password: "Password1",
 	})
 	CheckNoError(t, resp)
-	LinkUserToTeam(user, th.BasicTeam)
+	th.LinkUserToTeam(user, th.BasicTeam)
 	defer th.App.Srv.Store.User().PermanentDelete(user.Id)
 
 	user2, resp := Client.CreateUser(&model.User{
@@ -1334,7 +1363,7 @@ func TestGetUsersWithoutTeam(t *testing.T) {
 
 func TestGetUsersInTeam(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	teamId := th.BasicTeam.Id
 
@@ -1380,7 +1409,7 @@ func TestGetUsersInTeam(t *testing.T) {
 
 func TestGetUsersNotInTeam(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	teamId := th.BasicTeam.Id
 
@@ -1426,7 +1455,7 @@ func TestGetUsersNotInTeam(t *testing.T) {
 
 func TestGetUsersInChannel(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	channelId := th.BasicChannel.Id
 
@@ -1469,13 +1498,13 @@ func TestGetUsersInChannel(t *testing.T) {
 
 func TestGetUsersNotInChannel(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	teamId := th.BasicTeam.Id
 	channelId := th.BasicChannel.Id
 
 	user := th.CreateUser()
-	LinkUserToTeam(user, th.BasicTeam)
+	th.LinkUserToTeam(user, th.BasicTeam)
 
 	rusers, resp := Client.GetUsersNotInChannel(teamId, channelId, 0, 60, "")
 	CheckNoError(t, resp)
@@ -1508,9 +1537,9 @@ func TestGetUsersNotInChannel(t *testing.T) {
 	CheckNoError(t, resp)
 }
 
-/*func TestUpdateUserMfa(t *testing.T) {
+func TestUpdateUserMfa(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	isLicensed := utils.IsLicensed()
@@ -1521,38 +1550,49 @@ func TestGetUsersNotInChannel(t *testing.T) {
 		utils.SetLicense(license)
 		*utils.Cfg.ServiceSettings.EnableMultifactorAuthentication = enableMfa
 	}()
-	utils.IsLicensed()= true
+	utils.SetIsLicensed(true)
 	utils.SetLicense(&model.License{Features: &model.Features{}})
 	utils.License().Features.SetDefaults()
-
-	team := model.Team{DisplayName: "Name", Name: "z-z-" + model.NewId() + "a", Email: "test@nowhere.com", Type: model.TEAM_OPEN}
-	rteam, _ := Client.CreateTeam(&team)
-
-	user := model.User{Email: strings.ToLower(model.NewId()) + "success+test@simulator.amazonses.com", Nickname: "Corey Hulen", Password: "passwd1"}
-	ruser, _ := Client.CreateUser(&user)
-	LinkUserToTeam(ruser, rteam)
-	store.Must(app.Srv.Store.User().VerifyEmail(ruser.Id))
-
-	Client.Logout()
-	_, resp := Client.UpdateUserMfa(ruser.Id, "12334", true)
-	CheckUnauthorizedStatus(t, resp)
-
-	Client.Login(user.Email, user.Password)
-	_, resp = Client.UpdateUserMfa("fail", "56789", false)
-	CheckBadRequestStatus(t, resp)
-
-	_, resp = Client.UpdateUserMfa(ruser.Id, "", true)
-	CheckErrorMessage(t, resp, "api.context.invalid_body_param.app_error")
-
+	*utils.License().Features.MFA = true
 	*utils.Cfg.ServiceSettings.EnableMultifactorAuthentication = true
 
-	_, resp = Client.UpdateUserMfa(ruser.Id, "123456", false)
-	CheckNotImplementedStatus(t, resp)
-}*/
+	session, _ := th.App.GetSession(Client.AuthToken)
+	session.IsOAuth = true
+	app.AddSessionToCache(session)
+
+	_, resp := Client.UpdateUserMfa(th.BasicUser.Id, "12345", false)
+	CheckForbiddenStatus(t, resp)
+
+	/*
+		team := model.Team{DisplayName: "Name", Name: "z-z-" + model.NewId() + "a", Email: "test@nowhere.com", Type: model.TEAM_OPEN}
+		rteam, _ := Client.CreateTeam(&team)
+
+		user := model.User{Email: strings.ToLower(model.NewId()) + "success+test@simulator.amazonses.com", Nickname: "Corey Hulen", Password: "passwd1"}
+		ruser, _ := Client.CreateUser(&user)
+		th.LinkUserToTeam(ruser, rteam)
+		store.Must(app.Srv.Store.User().VerifyEmail(ruser.Id))
+
+		Client.Logout()
+		_, resp := Client.UpdateUserMfa(ruser.Id, "12334", true)
+		CheckUnauthorizedStatus(t, resp)
+
+		Client.Login(user.Email, user.Password)
+		_, resp = Client.UpdateUserMfa("fail", "56789", false)
+		CheckBadRequestStatus(t, resp)
+
+		_, resp = Client.UpdateUserMfa(ruser.Id, "", true)
+		CheckErrorMessage(t, resp, "api.context.invalid_body_param.app_error")
+
+		*utils.Cfg.ServiceSettings.EnableMultifactorAuthentication = true
+
+		_, resp = Client.UpdateUserMfa(ruser.Id, "123456", false)
+		CheckNotImplementedStatus(t, resp)
+	*/
+}
 
 func TestCheckUserMfa(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	required, resp := Client.CheckUserMfa(th.BasicUser.Email)
@@ -1609,30 +1649,51 @@ func TestCheckUserMfa(t *testing.T) {
 
 func TestGenerateMfaSecret(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	_, resp := Client.GenerateMfaSecret(th.BasicUser.Id)
 	CheckNotImplementedStatus(t, resp)
 
+	_, resp = th.SystemAdminClient.GenerateMfaSecret(th.BasicUser.Id)
+	CheckNotImplementedStatus(t, resp)
+
 	_, resp = Client.GenerateMfaSecret("junk")
 	CheckBadRequestStatus(t, resp)
 
+	isLicensed := utils.IsLicensed()
+	license := utils.License()
+	enableMfa := *utils.Cfg.ServiceSettings.EnableMultifactorAuthentication
+	defer func() {
+		utils.SetIsLicensed(isLicensed)
+		utils.SetLicense(license)
+		*utils.Cfg.ServiceSettings.EnableMultifactorAuthentication = enableMfa
+	}()
+	utils.SetIsLicensed(true)
+	utils.SetLicense(&model.License{Features: &model.Features{}})
+	utils.License().Features.SetDefaults()
+	*utils.License().Features.MFA = true
+	*utils.Cfg.ServiceSettings.EnableMultifactorAuthentication = true
+
 	_, resp = Client.GenerateMfaSecret(model.NewId())
+	CheckForbiddenStatus(t, resp)
+
+	session, _ := th.App.GetSession(Client.AuthToken)
+	session.IsOAuth = true
+	app.AddSessionToCache(session)
+
+	_, resp = Client.GenerateMfaSecret(th.BasicUser.Id)
 	CheckForbiddenStatus(t, resp)
 
 	Client.Logout()
 
 	_, resp = Client.GenerateMfaSecret(th.BasicUser.Id)
 	CheckUnauthorizedStatus(t, resp)
-
-	_, resp = th.SystemAdminClient.GenerateMfaSecret(th.BasicUser.Id)
-	CheckNotImplementedStatus(t, resp)
 }
 
 func TestUpdateUserPassword(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	password := "newpassword1"
@@ -1809,7 +1870,7 @@ func TestUpdateUserPassword(t *testing.T) {
 
 func TestGetSessions(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	user := th.BasicUser
@@ -1849,7 +1910,7 @@ func TestGetSessions(t *testing.T) {
 
 func TestRevokeSessions(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	user := th.BasicUser
@@ -1879,6 +1940,14 @@ func TestRevokeSessions(t *testing.T) {
 		t.Fatal("user session revoke unsuccessful")
 	}
 	CheckNoError(t, resp)
+
+	th.LoginBasic()
+
+	sessions, _ = th.App.GetSessions(th.SystemAdminUser.Id)
+	session = sessions[0]
+
+	_, resp = Client.RevokeSession(user.Id, session.Id)
+	CheckBadRequestStatus(t, resp)
 
 	Client.Logout()
 	_, resp = Client.RevokeSession(user.Id, model.NewId())
@@ -1952,7 +2021,7 @@ func TestRevokeAllSessions(t *testing.T) {
 
 func TestAttachDeviceId(t *testing.T) {
 	th := Setup().InitBasic()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	deviceId := model.PUSH_NOTIFY_APPLE + ":1234567890"
@@ -1982,7 +2051,7 @@ func TestAttachDeviceId(t *testing.T) {
 
 func TestGetUserAudits(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	user := th.BasicUser
 
@@ -2007,7 +2076,7 @@ func TestGetUserAudits(t *testing.T) {
 
 func TestVerifyUserEmail(t *testing.T) {
 	th := Setup().InitBasic()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	user := model.User{Email: GenerateTestEmail(), Nickname: "Darth Vader", Password: "hello1", Username: GenerateTestUsername(), Roles: model.ROLE_SYSTEM_ADMIN.Id + " " + model.ROLE_SYSTEM_USER.Id}
@@ -2031,7 +2100,7 @@ func TestVerifyUserEmail(t *testing.T) {
 
 func TestSendVerificationEmail(t *testing.T) {
 	th := Setup().InitBasic()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	pass, resp := Client.SendVerificationEmail(th.BasicUser.Email)
@@ -2055,7 +2124,7 @@ func TestSendVerificationEmail(t *testing.T) {
 
 func TestSetProfileImage(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	user := th.BasicUser
 
@@ -2106,7 +2175,7 @@ func TestSetProfileImage(t *testing.T) {
 
 func TestSwitchAccount(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	enableGitLab := utils.Cfg.GitLabSettings.Enable
@@ -2197,7 +2266,7 @@ func TestSwitchAccount(t *testing.T) {
 
 func TestCreateUserAccessToken(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	AdminClient := th.SystemAdminClient
 
@@ -2267,11 +2336,20 @@ func TestCreateUserAccessToken(t *testing.T) {
 	if ruser.Id != th.BasicUser.Id {
 		t.Fatal("returned wrong user")
 	}
+
+	Client.AuthToken = oldSessionToken
+
+	session, _ := th.App.GetSession(Client.AuthToken)
+	session.IsOAuth = true
+	app.AddSessionToCache(session)
+
+	_, resp = Client.CreateUserAccessToken(th.BasicUser.Id, testDescription)
+	CheckForbiddenStatus(t, resp)
 }
 
 func TestGetUserAccessToken(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	AdminClient := th.SystemAdminClient
 
@@ -2342,7 +2420,7 @@ func TestGetUserAccessToken(t *testing.T) {
 
 func TestRevokeUserAccessToken(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 	AdminClient := th.SystemAdminClient
 
@@ -2390,7 +2468,7 @@ func TestRevokeUserAccessToken(t *testing.T) {
 
 func TestUserAccessTokenInactiveUser(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	testDescription := "test token"
@@ -2417,7 +2495,7 @@ func TestUserAccessTokenInactiveUser(t *testing.T) {
 
 func TestUserAccessTokenDisableConfig(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
-	defer TearDown()
+	defer th.TearDown()
 	Client := th.Client
 
 	testDescription := "test token"

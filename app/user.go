@@ -202,7 +202,9 @@ func (a *App) CreateUser(user *model.User) (*model.User, *model.AppError) {
 		// This message goes to everyone, so the teamId, channelId and userId are irrelevant
 		message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_NEW_USER, "", "", "", nil)
 		message.Add("user_id", ruser.Id)
-		go Publish(message)
+		a.Go(func() {
+			a.Publish(message)
+		})
 
 		return ruser, nil
 	}
@@ -436,7 +438,7 @@ func (a *App) GetUsersPage(page int, perPage int, asAdmin bool) ([]*model.User, 
 }
 
 func (a *App) GetUsersEtag() string {
-	return (<-a.Srv.Store.User().GetEtagForAllProfiles()).Data.(string)
+	return fmt.Sprintf("%v.%v.%v", (<-a.Srv.Store.User().GetEtagForAllProfiles()).Data.(string), utils.Cfg.PrivacySettings.ShowFullName, utils.Cfg.PrivacySettings.ShowEmailAddress)
 }
 
 func (a *App) GetUsersInTeam(teamId string, offset int, limit int) ([]*model.User, *model.AppError) {
@@ -490,11 +492,11 @@ func (a *App) GetUsersNotInTeamPage(teamId string, page int, perPage int, asAdmi
 }
 
 func (a *App) GetUsersInTeamEtag(teamId string) string {
-	return (<-a.Srv.Store.User().GetEtagForProfiles(teamId)).Data.(string)
+	return fmt.Sprintf("%v.%v.%v", (<-a.Srv.Store.User().GetEtagForProfiles(teamId)).Data.(string), utils.Cfg.PrivacySettings.ShowFullName, utils.Cfg.PrivacySettings.ShowEmailAddress)
 }
 
 func (a *App) GetUsersNotInTeamEtag(teamId string) string {
-	return (<-a.Srv.Store.User().GetEtagForProfilesNotInTeam(teamId)).Data.(string)
+	return fmt.Sprintf("%v.%v.%v", (<-a.Srv.Store.User().GetEtagForProfilesNotInTeam(teamId)).Data.(string), utils.Cfg.PrivacySettings.ShowFullName, utils.Cfg.PrivacySettings.ShowEmailAddress)
 }
 
 func (a *App) GetUsersInChannel(channelId string, offset int, limit int) ([]*model.User, *model.AppError) {
@@ -829,7 +831,7 @@ func (a *App) SetProfileImage(userId string, imageData *multipart.FileHeader) *m
 		message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_USER_UPDATED, "", "", "", omitUsers)
 		message.Add("user", user)
 
-		Publish(message)
+		a.Publish(message)
 	}
 
 	return nil
@@ -950,7 +952,7 @@ func (a *App) UpdateUserAsUser(user *model.User, asAdmin bool) (*model.User, *mo
 		return nil, err
 	}
 
-	sendUpdatedUserEvent(*updatedUser, asAdmin)
+	a.sendUpdatedUserEvent(*updatedUser, asAdmin)
 
 	return updatedUser, nil
 }
@@ -968,19 +970,21 @@ func (a *App) PatchUser(userId string, patch *model.UserPatch, asAdmin bool) (*m
 		return nil, err
 	}
 
-	sendUpdatedUserEvent(*updatedUser, asAdmin)
+	a.sendUpdatedUserEvent(*updatedUser, asAdmin)
 
 	return updatedUser, nil
 }
 
-func sendUpdatedUserEvent(user model.User, asAdmin bool) {
+func (a *App) sendUpdatedUserEvent(user model.User, asAdmin bool) {
 	SanitizeProfile(&user, asAdmin)
 
 	omitUsers := make(map[string]bool, 1)
 	omitUsers[user.Id] = true
 	message := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_USER_UPDATED, "", "", "", omitUsers)
 	message.Add("user", user)
-	go Publish(message)
+	a.Go(func() {
+		a.Publish(message)
+	})
 }
 
 func (a *App) UpdateUser(user *model.User, sendNotifications bool) (*model.User, *model.AppError) {
@@ -991,11 +995,11 @@ func (a *App) UpdateUser(user *model.User, sendNotifications bool) (*model.User,
 
 		if sendNotifications {
 			if rusers[0].Email != rusers[1].Email {
-				go func() {
+				a.Go(func() {
 					if err := SendEmailChangeEmail(rusers[1].Email, rusers[0].Email, rusers[0].Locale, utils.GetSiteURL()); err != nil {
 						l4g.Error(err.Error())
 					}
-				}()
+				})
 
 				if utils.Cfg.EmailSettings.RequireEmailVerification {
 					if err := a.SendEmailVerification(rusers[0]); err != nil {
@@ -1005,11 +1009,11 @@ func (a *App) UpdateUser(user *model.User, sendNotifications bool) (*model.User,
 			}
 
 			if rusers[0].Username != rusers[1].Username {
-				go func() {
+				a.Go(func() {
 					if err := SendChangeUsernameEmail(rusers[1].Username, rusers[0].Username, rusers[0].Email, rusers[0].Locale, utils.GetSiteURL()); err != nil {
 						l4g.Error(err.Error())
 					}
-				}()
+				})
 			}
 		}
 
@@ -1047,7 +1051,7 @@ func (a *App) UpdateMfa(activate bool, userId, token string) *model.AppError {
 		}
 	}
 
-	go func() {
+	a.Go(func() {
 		var user *model.User
 		var err *model.AppError
 
@@ -1059,7 +1063,7 @@ func (a *App) UpdateMfa(activate bool, userId, token string) *model.AppError {
 		if err := SendMfaChangeEmail(user.Email, activate, user.Locale, utils.GetSiteURL()); err != nil {
 			l4g.Error(err.Error())
 		}
-	}()
+	})
 
 	return nil
 }
@@ -1093,11 +1097,11 @@ func (a *App) UpdatePasswordSendEmail(user *model.User, newPassword, method stri
 		return err
 	}
 
-	go func() {
+	a.Go(func() {
 		if err := SendPasswordChangeEmail(user.Email, method, user.Locale, utils.GetSiteURL()); err != nil {
 			l4g.Error(err.Error())
 		}
-	}()
+	})
 
 	return nil
 }

@@ -24,7 +24,8 @@ import (
 )
 
 func TestUploadFile(t *testing.T) {
-	th := Setup().InitBasic()
+	th := Setup().InitBasic().InitSystemAdmin()
+	defer th.TearDown()
 
 	if *utils.Cfg.FileSettings.DriverName == "" {
 		t.Logf("skipping because no file driver is enabled")
@@ -37,7 +38,9 @@ func TestUploadFile(t *testing.T) {
 	channel := th.BasicChannel
 
 	var uploadInfo *model.FileInfo
-	if data, err := readTestFile("test.png"); err != nil {
+	var data []byte
+	var err error
+	if data, err = readTestFile("test.png"); err != nil {
 		t.Fatal(err)
 	} else if resp, err := Client.UploadPostAttachment(data, channel.Id, "test.png"); err != nil {
 		t.Fatal(err)
@@ -102,6 +105,22 @@ func TestUploadFile(t *testing.T) {
 		t.Fatalf("file preview should've been saved in %v", expectedPreviewPath)
 	}
 
+	if _, err := Client.UploadPostAttachment(data, model.NewId(), "test.png"); err == nil || err.StatusCode != http.StatusForbidden {
+		t.Fatal("should have failed - bad channel id")
+	}
+
+	if _, err := Client.UploadPostAttachment(data, "../../junk", "test.png"); err == nil || err.StatusCode != http.StatusForbidden {
+		t.Fatal("should have failed - bad channel id")
+	}
+
+	if _, err := th.SystemAdminClient.UploadPostAttachment(data, model.NewId(), "test.png"); err == nil || err.StatusCode != http.StatusForbidden {
+		t.Fatal("should have failed - bad channel id")
+	}
+
+	if _, err := th.SystemAdminClient.UploadPostAttachment(data, "../../junk", "test.png"); err == nil || err.StatusCode != http.StatusForbidden {
+		t.Fatal("should have failed - bad channel id")
+	}
+
 	enableFileAttachments := *utils.Cfg.FileSettings.EnableFileAttachments
 	defer func() {
 		*utils.Cfg.FileSettings.EnableFileAttachments = enableFileAttachments
@@ -124,6 +143,7 @@ func TestUploadFile(t *testing.T) {
 
 func TestGetFileInfo(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
 
 	if *utils.Cfg.FileSettings.DriverName == "" {
 		t.Skip("skipping because no file driver is enabled")
@@ -193,6 +213,7 @@ func TestGetFileInfo(t *testing.T) {
 
 func TestGetFile(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
 
 	if *utils.Cfg.FileSettings.DriverName == "" {
 		t.Skip("skipping because no file driver is enabled")
@@ -275,6 +296,7 @@ func TestGetFile(t *testing.T) {
 
 func TestGetFileThumbnail(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
 
 	if *utils.Cfg.FileSettings.DriverName == "" {
 		t.Skip("skipping because no file driver is enabled")
@@ -331,6 +353,7 @@ func TestGetFileThumbnail(t *testing.T) {
 
 func TestGetFilePreview(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
 
 	if *utils.Cfg.FileSettings.DriverName == "" {
 		t.Skip("skipping because no file driver is enabled")
@@ -387,6 +410,7 @@ func TestGetFilePreview(t *testing.T) {
 
 func TestGetPublicFile(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
 
 	if *utils.Cfg.FileSettings.DriverName == "" {
 		t.Skip("skipping because no file driver is enabled")
@@ -454,6 +478,7 @@ func TestGetPublicFile(t *testing.T) {
 
 func TestGetPublicFileOld(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
 
 	if *utils.Cfg.FileSettings.DriverName == "" {
 		t.Skip("skipping because no file driver is enabled")
@@ -538,6 +563,7 @@ func generatePublicLinkOld(siteURL, teamId, channelId, userId, filename string) 
 
 func TestGetPublicLink(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
 
 	if *utils.Cfg.FileSettings.DriverName == "" {
 		t.Skip("skipping because no file driver is enabled")
@@ -607,6 +633,7 @@ func TestGetPublicLink(t *testing.T) {
 
 func TestMigrateFilenamesToFileInfos(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
 
 	if *utils.Cfg.FileSettings.DriverName == "" {
 		t.Skip("skipping because no file driver is enabled")
@@ -719,6 +746,7 @@ func uploadFileOld(t *testing.T, data []byte, dest string, filename string) {
 
 func TestFindTeamIdForFilename(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
 
 	if *utils.Cfg.FileSettings.DriverName == "" {
 		t.Skip("skipping because no file driver is enabled")
@@ -785,6 +813,7 @@ func TestFindTeamIdForFilename(t *testing.T) {
 
 func TestGetInfoForFilename(t *testing.T) {
 	th := Setup().InitBasic()
+	defer th.TearDown()
 
 	if *utils.Cfg.FileSettings.DriverName == "" {
 		t.Skip("skipping because no file driver is enabled")

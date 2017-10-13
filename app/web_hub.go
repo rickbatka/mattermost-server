@@ -29,52 +29,54 @@ type Hub struct {
 	// connectionCount should be kept first.
 	// See https://github.com/mattermost/mattermost-server/pull/7281
 	connectionCount int64
+	app             *App
 	connections     []*WebConn
 	connectionIndex int
 	register        chan *WebConn
 	unregister      chan *WebConn
 	broadcast       chan *model.WebSocketEvent
-	stop            chan string
+	stop            chan struct{}
+	didStop         chan struct{}
 	invalidateUser  chan string
 	ExplicitStop    bool
 	goroutineId     int
 }
 
-var hubs []*Hub = make([]*Hub, 0)
-var stopCheckingForDeadlock chan bool
-
-func NewWebHub() *Hub {
+func (a *App) NewWebHub() *Hub {
 	return &Hub{
-		register:       make(chan *WebConn),
-		unregister:     make(chan *WebConn),
+		app:            a,
+		register:       make(chan *WebConn, 1),
+		unregister:     make(chan *WebConn, 1),
 		connections:    make([]*WebConn, 0, model.SESSION_CACHE_SIZE),
 		broadcast:      make(chan *model.WebSocketEvent, BROADCAST_QUEUE_SIZE),
-		stop:           make(chan string),
+		stop:           make(chan struct{}),
+		didStop:        make(chan struct{}, 1),
 		invalidateUser: make(chan string),
 		ExplicitStop:   false,
 	}
 }
 
-func TotalWebsocketConnections() int {
+func (a *App) TotalWebsocketConnections() int {
 	count := int64(0)
-	for _, hub := range hubs {
+	for _, hub := range a.Hubs {
 		count = count + atomic.LoadInt64(&hub.connectionCount)
 	}
 
 	return int(count)
 }
 
-func HubStart() {
+func (a *App) HubStart() {
 	// Total number of hubs is twice the number of CPUs.
 	numberOfHubs := runtime.NumCPU() * 2
 	l4g.Info(utils.T("api.web_hub.start.starting.debug"), numberOfHubs)
 
-	hubs = make([]*Hub, numberOfHubs)
+	a.Hubs = make([]*Hub, numberOfHubs)
+	a.HubsStopCheckingForDeadlock = make(chan bool, 1)
 
-	for i := 0; i < len(hubs); i++ {
-		hubs[i] = NewWebHub()
-		hubs[i].connectionIndex = i
-		hubs[i].Start()
+	for i := 0; i < len(a.Hubs); i++ {
+		a.Hubs[i] = a.NewWebHub()
+		a.Hubs[i].connectionIndex = i
+		a.Hubs[i].Start()
 	}
 
 	go func() {
@@ -84,12 +86,10 @@ func HubStart() {
 			ticker.Stop()
 		}()
 
-		stopCheckingForDeadlock = make(chan bool, 1)
-
 		for {
 			select {
 			case <-ticker.C:
-				for _, hub := range hubs {
+				for _, hub := range a.Hubs {
 					if len(hub.broadcast) >= DEADLOCK_WARN {
 						l4g.Error("Hub processing might be deadlock on hub %v goroutine %v with %v events in the buffer", hub.connectionIndex, hub.goroutineId, len(hub.broadcast))
 						buf := make([]byte, 1<<16)
@@ -105,46 +105,42 @@ func HubStart() {
 					}
 				}
 
-			case <-stopCheckingForDeadlock:
+			case <-a.HubsStopCheckingForDeadlock:
 				return
 			}
 		}
 	}()
 }
 
-func HubStop() {
+func (a *App) HubStop() {
 	l4g.Info(utils.T("api.web_hub.start.stopping.debug"))
 
 	select {
-	case stopCheckingForDeadlock <- true:
+	case a.HubsStopCheckingForDeadlock <- true:
 	default:
 		l4g.Warn("We appear to have already sent the stop checking for deadlocks command")
 	}
 
-	for _, hub := range hubs {
+	for _, hub := range a.Hubs {
 		hub.Stop()
 	}
 
-	hubs = make([]*Hub, 0)
+	a.Hubs = []*Hub{}
 }
 
-func GetHubForUserId(userId string) *Hub {
+func (a *App) GetHubForUserId(userId string) *Hub {
 	hash := fnv.New32a()
 	hash.Write([]byte(userId))
-	index := hash.Sum32() % uint32(len(hubs))
-	return hubs[index]
+	index := hash.Sum32() % uint32(len(a.Hubs))
+	return a.Hubs[index]
 }
 
-func HubRegister(webConn *WebConn) {
-	GetHubForUserId(webConn.UserId).Register(webConn)
+func (a *App) HubRegister(webConn *WebConn) {
+	a.GetHubForUserId(webConn.UserId).Register(webConn)
 }
 
-func HubUnregister(webConn *WebConn) {
-	GetHubForUserId(webConn.UserId).Unregister(webConn)
-}
-
-func Publish(message *model.WebSocketEvent) {
-	Global().Publish(message)
+func (a *App) HubUnregister(webConn *WebConn) {
+	a.GetHubForUserId(webConn.UserId).Unregister(webConn)
 }
 
 func (a *App) Publish(message *model.WebSocketEvent) {
@@ -152,7 +148,7 @@ func (a *App) Publish(message *model.WebSocketEvent) {
 		metrics.IncrementWebsocketEvent(message.Event)
 	}
 
-	PublishSkipClusterSend(message)
+	a.PublishSkipClusterSend(message)
 
 	if a.Cluster != nil {
 		cm := &model.ClusterMessage{
@@ -173,8 +169,8 @@ func (a *App) Publish(message *model.WebSocketEvent) {
 	}
 }
 
-func PublishSkipClusterSend(message *model.WebSocketEvent) {
-	for _, hub := range hubs {
+func (a *App) PublishSkipClusterSend(message *model.WebSocketEvent) {
+	for _, hub := range a.Hubs {
 		hub.Broadcast(message)
 	}
 }
@@ -291,8 +287,8 @@ func (a *App) InvalidateCacheForUserSkipClusterSend(userId string) {
 	a.Srv.Store.User().InvalidateProfilesInChannelCacheByUser(userId)
 	a.Srv.Store.User().InvalidatProfileCacheForUser(userId)
 
-	if len(hubs) != 0 {
-		GetHubForUserId(userId).InvalidateUser(userId)
+	if len(a.Hubs) != 0 {
+		a.GetHubForUserId(userId).InvalidateUser(userId)
 	}
 }
 
@@ -313,9 +309,9 @@ func (a *App) InvalidateCacheForWebhookSkipClusterSend(webhookId string) {
 	a.Srv.Store.Webhook().InvalidateWebhookCache(webhookId)
 }
 
-func InvalidateWebConnSessionCacheForUser(userId string) {
-	if len(hubs) != 0 {
-		GetHubForUserId(userId).InvalidateUser(userId)
+func (a *App) InvalidateWebConnSessionCacheForUser(userId string) {
+	if len(a.Hubs) != 0 {
+		a.GetHubForUserId(userId).InvalidateUser(userId)
 	}
 }
 
@@ -328,7 +324,10 @@ func (h *Hub) Register(webConn *WebConn) {
 }
 
 func (h *Hub) Unregister(webConn *WebConn) {
-	h.unregister <- webConn
+	select {
+	case h.unregister <- webConn:
+	case <-h.stop:
+	}
 }
 
 func (h *Hub) Broadcast(message *model.WebSocketEvent) {
@@ -353,7 +352,8 @@ func getGoroutineId() int {
 }
 
 func (h *Hub) Stop() {
-	h.stop <- "all"
+	close(h.stop)
+	<-h.didStop
 }
 
 func (h *Hub) Start() {
@@ -401,7 +401,9 @@ func (h *Hub) Start() {
 				}
 
 				if !found {
-					go Global().SetStatusOffline(userId, false)
+					h.app.Go(func() {
+						h.app.SetStatusOffline(userId, false)
+					})
 				}
 
 			case userId := <-h.invalidateUser:
@@ -431,10 +433,20 @@ func (h *Hub) Start() {
 				}
 
 			case <-h.stop:
+				userIds := make(map[string]bool)
+
 				for _, webCon := range h.connections {
-					webCon.WebSocket.Close()
+					userIds[webCon.UserId] = true
+					webCon.Close()
 				}
+
+				for userId := range userIds {
+					h.app.SetStatusOffline(userId, false)
+				}
+
+				h.connections = make([]*WebConn, 0, model.SESSION_CACHE_SIZE)
 				h.ExplicitStop = true
+				h.didStop <- struct{}{}
 
 				return
 			}

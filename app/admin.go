@@ -14,9 +14,8 @@ import (
 	"net/http"
 
 	l4g "github.com/alecthomas/log4go"
-	"github.com/mattermost/mattermost-server/jobs"
 	"github.com/mattermost/mattermost-server/model"
-	"github.com/mattermost/mattermost-server/store"
+	"github.com/mattermost/mattermost-server/store/sqlstore"
 	"github.com/mattermost/mattermost-server/utils"
 )
 
@@ -117,10 +116,10 @@ func (a *App) InvalidateAllCachesSkipSend() {
 	l4g.Info(utils.T("api.context.invalidate_all_caches"))
 	sessionCache.Purge()
 	ClearStatusCache()
-	store.ClearChannelCaches()
-	store.ClearUserCaches()
-	store.ClearPostCaches()
-	store.ClearWebhookCaches()
+	sqlstore.ClearChannelCaches()
+	sqlstore.ClearUserCaches()
+	sqlstore.ClearPostCaches()
+	sqlstore.ClearWebhookCaches()
 	a.LoadLicense()
 }
 
@@ -137,7 +136,7 @@ func (a *App) ReloadConfig() {
 	utils.LoadConfig(utils.CfgFileName)
 
 	// start/restart email batching job if necessary
-	InitEmailBatching()
+	a.InitEmailBatching()
 }
 
 func (a *App) SaveConfig(cfg *model.Config, sendConfigChangeClusterMessage bool) *model.AppError {
@@ -178,7 +177,7 @@ func (a *App) SaveConfig(cfg *model.Config, sendConfigChangeClusterMessage bool)
 	}
 
 	// start/restart email batching job if necessary
-	InitEmailBatching()
+	a.InitEmailBatching()
 
 	return nil
 }
@@ -187,12 +186,13 @@ func (a *App) RecycleDatabaseConnection() {
 	oldStore := a.Srv.Store
 
 	l4g.Warn(utils.T("api.admin.recycle_db_start.warn"))
-	a.Srv.Store = store.NewLayeredStore(a.Metrics, a.Cluster)
+	a.Srv.Store = a.newStore()
+	a.Jobs.Store = a.Srv.Store
 
-	jobs.Srv.Store = a.Srv.Store
-
-	time.Sleep(20 * time.Second)
-	oldStore.Close()
+	if a.Srv.Store != oldStore {
+		time.Sleep(20 * time.Second)
+		oldStore.Close()
+	}
 
 	l4g.Warn(utils.T("api.admin.recycle_db_end.warn"))
 }

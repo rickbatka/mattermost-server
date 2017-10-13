@@ -71,6 +71,18 @@ func (a *App) GetSession(token string) (*model.Session, *model.AppError) {
 		return nil, model.NewAppError("GetSession", "api.context.invalid_token.error", map[string]interface{}{"Token": token}, "", http.StatusUnauthorized)
 	}
 
+	if *utils.Cfg.ServiceSettings.SessionIdleTimeoutInMinutes > 0 &&
+		utils.IsLicensed() && *utils.License().Features.Compliance &&
+		session != nil && !session.IsOAuth && !session.IsMobileApp() &&
+		session.Props[model.SESSION_PROP_TYPE] != model.SESSION_TYPE_USER_ACCESS_TOKEN {
+
+		timeout := int64(*utils.Cfg.ServiceSettings.SessionIdleTimeoutInMinutes) * 1000 * 60
+		if model.GetMillis()-session.LastActivityAt > timeout {
+			a.RevokeSessionById(session.Id)
+			return nil, model.NewAppError("GetSession", "api.context.invalid_token.error", map[string]interface{}{"Token": token}, "idle timeout", http.StatusUnauthorized)
+		}
+	}
+
 	return session, nil
 }
 
@@ -107,8 +119,7 @@ func (a *App) RevokeAllSessions(userId string) *model.AppError {
 }
 
 func (a *App) ClearSessionCacheForUser(userId string) {
-
-	ClearSessionCacheForUserSkipClusterSend(userId)
+	a.ClearSessionCacheForUserSkipClusterSend(userId)
 
 	if a.Cluster != nil {
 		msg := &model.ClusterMessage{
@@ -120,7 +131,7 @@ func (a *App) ClearSessionCacheForUser(userId string) {
 	}
 }
 
-func ClearSessionCacheForUserSkipClusterSend(userId string) {
+func (a *App) ClearSessionCacheForUserSkipClusterSend(userId string) {
 	keys := sessionCache.Keys()
 
 	for _, key := range keys {
@@ -132,8 +143,7 @@ func ClearSessionCacheForUserSkipClusterSend(userId string) {
 		}
 	}
 
-	InvalidateWebConnSessionCacheForUser(userId)
-
+	a.InvalidateWebConnSessionCacheForUser(userId)
 }
 
 func AddSessionToCache(session *model.Session) {
@@ -161,6 +171,15 @@ func (a *App) RevokeSessionsForDeviceId(userId string, deviceId string, currentS
 	}
 
 	return nil
+}
+
+func (a *App) GetSessionById(sessionId string) (*model.Session, *model.AppError) {
+	if result := <-a.Srv.Store.Session().Get(sessionId); result.Err != nil {
+		result.Err.StatusCode = http.StatusBadRequest
+		return nil, result.Err
+	} else {
+		return result.Data.(*model.Session), nil
+	}
 }
 
 func (a *App) RevokeSessionById(sessionId string) *model.AppError {
